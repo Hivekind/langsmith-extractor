@@ -1,16 +1,17 @@
 """Fetch command for retrieving LangSmith traces."""
 
 import logging
+import time
 from datetime import datetime
 from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from lse.cli import handle_exceptions
 from lse.config import get_settings
 from lse.exceptions import ValidationError
+from lse.utils import create_spinner, ProgressContext, OperationTimer
 
 logger = logging.getLogger("lse.fetch")
 console = Console()
@@ -48,28 +49,44 @@ def fetch_traces_placeholder(
     end_date: Optional[datetime] = None,
     limit: Optional[int] = None,
 ) -> dict:
-    """Placeholder function for fetching traces."""
+    """Placeholder function for fetching traces with enhanced progress indication."""
     logger.info("Executing fetch traces placeholder")
     
-    # Simulate some work with progress indication
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        console=console,
-        transient=True,
-    ) as progress:
+    with OperationTimer("Trace fetch operation"):
         if trace_id:
-            task = progress.add_task(f"Fetching trace {trace_id}...", total=None)
-            progress.update(task, advance=1)
+            # Single trace fetch with spinner
+            with create_spinner(f"Fetching trace {trace_id}...") as spinner:
+                time.sleep(1.5)  # Simulate API call
+            
+            traces_found = 1
+            
         else:
-            task = progress.add_task("Searching for traces...", total=None)
-            progress.update(task, advance=1)
-        
-        # Simulate API call delay
-        import time
-        time.sleep(1)
+            # Multiple trace search with progress bar
+            estimated_traces = limit or 100
+            
+            with ProgressContext("Searching for traces") as progress:
+                # Phase 1: Search
+                search_task = progress.add_task("Searching LangSmith...", total=100)
+                
+                for i in range(100):
+                    time.sleep(0.01)  # Simulate search progress
+                    progress.update(search_task, advance=1)
+                
+                # Phase 2: Filter and process
+                if estimated_traces > 1:
+                    process_task = progress.add_task("Processing results...", total=estimated_traces)
+                    
+                    for i in range(min(estimated_traces, 10)):  # Simulate processing some results
+                        time.sleep(0.05)
+                        progress.update(
+                            process_task, 
+                            advance=estimated_traces // 10,
+                            description=f"Processing trace {i + 1}..."
+                        )
+            
+            traces_found = min(estimated_traces, 10)  # Simulate finding some traces
     
-    # Return placeholder results
+    # Return enhanced placeholder results
     result = {
         "status": "success",
         "message": "Fetch operation completed (placeholder)",
@@ -80,7 +97,7 @@ def fetch_traces_placeholder(
             "end_date": end_date.isoformat() if end_date else None,
             "limit": limit,
         },
-        "traces_found": 0 if trace_id else None,
+        "traces_found": traces_found,
         "note": "This is a placeholder implementation. Actual LangSmith API integration will be added later."
     }
     
