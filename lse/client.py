@@ -64,8 +64,15 @@ class LangSmithClient:
             APIError: If connection fails or authentication is invalid
         """
         try:
-            # Try to list runs with a minimal query to test connectivity
-            list(self.client.list_runs(limit=1))
+            # Try to list projects to test connectivity (doesn't require filters)
+            # If this fails, try listing runs with is_root filter
+            try:
+                # First try to list projects - this is a simpler API call
+                list(self.client.list_projects(limit=1))
+            except:
+                # Fallback: try to list root runs from any project
+                list(self.client.list_runs(is_root=True, limit=1))
+            
             logger.info("LangSmith API connection validated successfully")
             return True
         except Exception as e:
@@ -116,22 +123,39 @@ class LangSmithClient:
             APIError: If the search fails
         """
         try:
-            # Build filter parameters
-            filters = {}
-            if project_name:
-                filters['project_name'] = project_name
-            if start_time:
-                filters['start_time'] = start_time
-            if end_time:
-                filters['end_time'] = end_time
+            # Build filter parameters - list_runs expects specific parameter names
+            list_params = {}
             
-            # Merge additional filters
-            filters.update(kwargs)
+            if project_name:
+                list_params['project_name'] = project_name
+            
+            if start_time:
+                # Convert string to datetime if needed
+                if isinstance(start_time, str):
+                    from datetime import datetime
+                    list_params['start_time'] = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                else:
+                    list_params['start_time'] = start_time
+            
+            if end_time:
+                # Convert string to datetime if needed
+                if isinstance(end_time, str):
+                    from datetime import datetime
+                    list_params['end_time'] = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                else:
+                    list_params['end_time'] = end_time
+            
+            # Add any additional kwargs
+            list_params.update(kwargs)
+            
+            # Default to fetching root runs only (traces)
+            if 'is_root' not in list_params:
+                list_params['is_root'] = True
             
             # Execute search
             runs = list(self.client.list_runs(
                 limit=limit,
-                **filters
+                **list_params
             ))
             
             logger.debug(f"Search returned {len(runs)} runs")
