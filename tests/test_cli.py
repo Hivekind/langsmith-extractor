@@ -6,11 +6,9 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from lse.cli import app
-from lse.config import Settings
 
 
 class TestCLIApp:

@@ -193,7 +193,7 @@ def with_progress(description: str, show_colors: bool = False):
                     return func(*args, **kwargs)
             else:
                 # No progress callback needed, just run with spinner
-                with create_spinner(description) as spinner:
+                with create_spinner(description):
                     return func(*args, **kwargs)
         
         return wrapper

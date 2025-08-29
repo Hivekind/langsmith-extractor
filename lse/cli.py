@@ -7,6 +7,7 @@ from pathlib import Path
 import typer
 
 from lse import __app_name__, __version__
+from lse.client import LangSmithClient
 from lse.config import get_settings
 from lse.exceptions import ConfigurationError, LSEError
 
@@ -24,6 +25,25 @@ def version_callback(value: bool) -> None:
     if value:
         typer.echo(f"{__app_name__} v{__version__}")
         raise typer.Exit()
+
+
+def get_langsmith_client() -> LangSmithClient:
+    """Get initialized and validated LangSmith client.
+    
+    Returns:
+        Validated LangSmith client instance
+        
+    Raises:
+        ConfigurationError: If configuration is invalid
+        APIError: If API connection fails
+    """
+    settings = get_settings()
+    settings.validate_required_fields()
+    
+    client = LangSmithClient(settings)
+    client.validate_connection()
+    
+    return client
 
 
 def setup_logging(log_level: str) -> None:
@@ -91,7 +111,7 @@ def main(
         logger = logging.getLogger("lse")
         logger.debug(f"Starting {__app_name__} v{__version__}")
         
-    except ConfigurationError as e:
+    except ConfigurationError:
         # Don't fail on configuration errors for basic commands like --help, --version
         # These are handled by typer before we get here due to is_eager=True
         pass
@@ -130,6 +150,7 @@ def handle_exceptions(func):
 
 # Register commands
 from lse.commands.fetch import fetch_command
+
 app.command("fetch")(handle_exceptions(fetch_command))
 
 

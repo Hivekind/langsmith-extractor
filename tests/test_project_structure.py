@@ -1,6 +1,5 @@
 """Tests for project structure and setup."""
 
-import sys
 from pathlib import Path
 
 import pytest

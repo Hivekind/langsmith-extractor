@@ -1,16 +1,16 @@
 """Fetch command for retrieving LangSmith traces."""
 
 import logging
-import time
 from datetime import datetime
 from typing import Optional
 
 import typer
 from rich.console import Console
 
-from lse.cli import handle_exceptions
+from lse.cli import get_langsmith_client
 from lse.config import get_settings
-from lse.exceptions import ValidationError
+from lse.exceptions import APIError, ValidationError
+from lse.storage import TraceStorage
 from lse.utils import create_spinner, ProgressContext, OperationTimer
 
 logger = logging.getLogger("lse.fetch")
@@ -42,54 +42,87 @@ def validate_date_range(start_date: Optional[str], end_date: Optional[str]) -> t
     return start_dt, end_dt
 
 
-def fetch_traces_placeholder(
+def fetch_traces(
     trace_id: Optional[str] = None,
     project: Optional[str] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     limit: Optional[int] = None,
 ) -> dict:
-    """Placeholder function for fetching traces with enhanced progress indication."""
-    logger.info("Executing fetch traces placeholder")
+    """Fetch traces from LangSmith API and save them locally."""
+    logger.info("Executing LangSmith trace fetch")
+    
+    # Initialize client and storage
+    client = get_langsmith_client()
+    settings = get_settings()
+    storage = TraceStorage(settings)
     
     with OperationTimer("Trace fetch operation"):
+        traces_data = []
+        saved_files = []
+        
         if trace_id:
             # Single trace fetch with spinner
-            with create_spinner(f"Fetching trace {trace_id}...") as spinner:
-                time.sleep(1.5)  # Simulate API call
+            with create_spinner(f"Fetching trace {trace_id}..."):
+                try:
+                    run = client.fetch_run(trace_id)
+                    traces_data = [run]
+                    logger.info(f"Successfully fetched trace {trace_id}")
+                except APIError as e:
+                    logger.error(f"Failed to fetch trace {trace_id}: {e}")
+                    raise
             
-            traces_found = 1
+            # Save single trace
+            with create_spinner("Saving trace..."):
+                try:
+                    file_path = storage.save_trace(run, project)
+                    saved_files = [file_path]
+                except Exception as e:
+                    logger.error(f"Failed to save trace: {e}")
+                    raise
             
         else:
             # Multiple trace search with progress bar
-            estimated_traces = limit or 100
-            
-            with ProgressContext("Searching for traces") as progress:
+            with ProgressContext("Fetching and saving traces") as progress:
                 # Phase 1: Search
                 search_task = progress.add_task("Searching LangSmith...", total=100)
                 
-                for i in range(100):
-                    time.sleep(0.01)  # Simulate search progress
-                    progress.update(search_task, advance=1)
-                
-                # Phase 2: Filter and process
-                if estimated_traces > 1:
-                    process_task = progress.add_task("Processing results...", total=estimated_traces)
+                try:
+                    # Build search parameters
+                    search_params = {}
+                    if project:
+                        search_params['project_name'] = project
+                    if start_date:
+                        search_params['start_time'] = start_date.isoformat()
+                    if end_date:
+                        search_params['end_time'] = end_date.isoformat()
                     
-                    for i in range(min(estimated_traces, 10)):  # Simulate processing some results
-                        time.sleep(0.05)
-                        progress.update(
-                            process_task, 
-                            advance=estimated_traces // 10,
-                            description=f"Processing trace {i + 1}..."
-                        )
-            
-            traces_found = min(estimated_traces, 10)  # Simulate finding some traces
+                    # Execute search
+                    runs = client.search_runs(limit=limit, **search_params)
+                    traces_data = runs
+                    progress.update(search_task, completed=100)
+                    
+                    # Phase 2: Save results
+                    if runs:
+                        save_task = progress.add_task("Saving traces...", total=len(runs))
+                        
+                        try:
+                            saved_files = storage.save_traces(runs, project)
+                            progress.update(save_task, completed=len(runs))
+                        except Exception as e:
+                            logger.error(f"Failed to save traces: {e}")
+                            raise
+                    
+                    logger.info(f"Successfully fetched and saved {len(traces_data)} traces")
+                    
+                except APIError as e:
+                    logger.error(f"Failed to search traces: {e}")
+                    raise
     
-    # Return enhanced placeholder results
+    # Return results
     result = {
         "status": "success",
-        "message": "Fetch operation completed (placeholder)",
+        "message": "Fetch and save operation completed",
         "parameters": {
             "trace_id": trace_id,
             "project": project,
@@ -97,8 +130,9 @@ def fetch_traces_placeholder(
             "end_date": end_date.isoformat() if end_date else None,
             "limit": limit,
         },
-        "traces_found": traces_found,
-        "note": "This is a placeholder implementation. Actual LangSmith API integration will be added later."
+        "traces_found": len(traces_data),
+        "files_saved": len(saved_files),
+        "saved_paths": [str(path) for path in saved_files],
     }
     
     return result
@@ -175,8 +209,8 @@ def fetch_command(
                 f"date_range={start_date} to {end_date}, limit={limit}")
     
     try:
-        # Execute placeholder fetch operation
-        result = fetch_traces_placeholder(
+        # Execute fetch operation
+        result = fetch_traces(
             trace_id=trace_id,
             project=project,
             start_date=start_dt,
@@ -194,8 +228,24 @@ def fetch_command(
             if result.get("traces_found") is not None:
                 console.print(f"Traces found: {result['traces_found']}")
             
+            if result.get("files_saved") is not None:
+                console.print(f"Files saved: {result['files_saved']}")
+            
             console.print(f"Output directory: {settings.output_dir}")
-            console.print(f"\n[dim]{result['note']}[/dim]")
+            
+            # Show first few saved file paths
+            if result.get("saved_paths"):
+                paths = result["saved_paths"]
+                if len(paths) <= 3:
+                    for path in paths:
+                        console.print(f"  Saved: {path}")
+                else:
+                    for path in paths[:2]:
+                        console.print(f"  Saved: {path}")
+                    console.print(f"  ... and {len(paths) - 2} more files")
+            
+            if result.get("note"):
+                console.print(f"\n[dim]{result['note']}[/dim]")
         else:
             console.print(f"[red]✗[/red] Fetch operation failed: {result.get('message', 'Unknown error')}")
             raise typer.Exit(1)

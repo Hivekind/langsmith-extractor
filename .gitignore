@@ -11,3 +11,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Application files
+.logs/
+data/
+archives/
+
+# Environment files
+.env

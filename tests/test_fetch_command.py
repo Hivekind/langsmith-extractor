@@ -3,14 +3,11 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
-import pytest
 from typer.testing import CliRunner
 
 from lse.cli import app
-from lse.commands.fetch import fetch_command
-from lse.exceptions import ConfigurationError, ValidationError
 
 
 class TestFetchCommandParameters:
@@ -119,25 +116,40 @@ class TestFetchCommandPlaceholder:
         """Set up test fixtures."""
         self.runner = CliRunner()
 
-    @patch('lse.commands.fetch.fetch_traces_placeholder')
-    def test_fetch_calls_placeholder_function(self, mock_fetch):
-        """Test that fetch command calls the placeholder function."""
-        mock_fetch.return_value = {"message": "Placeholder executed"}
+    @patch('lse.commands.fetch.fetch_traces')
+    def test_fetch_calls_real_function(self, mock_fetch):
+        """Test that fetch command calls the real fetch function."""
+        mock_fetch.return_value = {
+            "status": "success",
+            "message": "Fetch and save operation completed",
+            "traces_found": 1,
+            "files_saved": 1,
+            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"]
+        }
         
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
             result = self.runner.invoke(app, ["fetch", "--trace-id", "test-123"])
             
-            # Should call the placeholder function
+            # Should call the real fetch function
             if result.exit_code == 0:
                 mock_fetch.assert_called_once()
 
-    def test_fetch_shows_placeholder_output(self):
-        """Test that fetch command shows placeholder output."""
+    @patch('lse.commands.fetch.fetch_traces')
+    def test_fetch_shows_real_output(self, mock_fetch):
+        """Test that fetch command shows real API output."""
+        mock_fetch.return_value = {
+            "status": "success",
+            "message": "Fetch and save operation completed",
+            "traces_found": 1,
+            "files_saved": 1,
+            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"]
+        }
+        
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
             result = self.runner.invoke(app, ["fetch", "--trace-id", "test-123"])
             
-            # Should show some output indicating it's a placeholder
-            assert "placeholder" in result.stdout.lower() or "not implemented" in result.stdout.lower() or result.exit_code == 0
+            # Should show successful operation output
+            assert result.exit_code == 0 or "completed" in result.stdout.lower()
 
 
 class TestFetchCommandIntegration:
@@ -196,7 +208,7 @@ class TestFetchCommandErrorHandling:
     def test_fetch_handles_keyboard_interrupt(self):
         """Test that fetch command handles keyboard interrupt gracefully."""
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            with patch('lse.commands.fetch.fetch_traces_placeholder') as mock_fetch:
+            with patch('lse.commands.fetch.fetch_traces') as mock_fetch:
                 mock_fetch.side_effect = KeyboardInterrupt()
                 
                 result = self.runner.invoke(app, ["fetch", "--trace-id", "test"])

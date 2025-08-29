@@ -1,11 +1,10 @@
 """Configuration management for LSE CLI."""
 
-import os
 from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from lse.exceptions import ConfigurationError
