@@ -102,6 +102,9 @@ def main(
 
 def handle_exceptions(func):
     """Decorator to handle exceptions in CLI commands."""
+    import functools
+    
+    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
             return func(*args, **kwargs)
@@ -123,6 +126,11 @@ def handle_exceptions(func):
             raise typer.Exit(1)
     
     return wrapper
+
+
+# Register commands
+from lse.commands.fetch import fetch_command
+app.command("fetch")(handle_exceptions(fetch_command))
 
 
 if __name__ == "__main__":
