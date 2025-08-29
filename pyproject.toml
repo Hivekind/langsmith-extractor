@@ -1,9 +1,36 @@
 [project]
 name = "langsmith-extractor"
 version = "0.1.0"
-description = "Add your description here"
+description = "CLI tool for extracting and analyzing LangSmith trace data"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "typer[all]>=0.9.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "rich>=13.7.0",
+]
+
+[project.scripts]
+lse = "lse.cli:app"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+dev = [
     "ruff>=0.12.11",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
 ]
