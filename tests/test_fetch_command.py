@@ -41,11 +41,9 @@ class TestFetchCommandParameters:
     def test_fetch_with_date_range_parameters(self):
         """Test fetch command with date range parameters."""
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            result = self.runner.invoke(app, [
-                "fetch", 
-                "--start-date", "2024-01-01", 
-                "--end-date", "2024-01-02"
-            ])
+            result = self.runner.invoke(
+                app, ["fetch", "--start-date", "2024-01-01", "--end-date", "2024-01-02"]
+            )
             # Should not crash on parameter parsing
             assert result.exit_code != 2
 
@@ -59,12 +57,18 @@ class TestFetchCommandParameters:
     def test_fetch_with_multiple_parameters(self):
         """Test fetch command with multiple parameters combined."""
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            result = self.runner.invoke(app, [
-                "fetch",
-                "--project", "test-project",
-                "--start-date", "2024-01-01",
-                "--limit", "5"
-            ])
+            result = self.runner.invoke(
+                app,
+                [
+                    "fetch",
+                    "--project",
+                    "test-project",
+                    "--start-date",
+                    "2024-01-01",
+                    "--limit",
+                    "5",
+                ],
+            )
             # Should not crash on parameter parsing
             assert result.exit_code != 2
 
@@ -100,13 +104,13 @@ class TestFetchCommandValidation:
     def test_fetch_validates_end_date_after_start_date(self):
         """Test that fetch command validates end date is after start date."""
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            result = self.runner.invoke(app, [
-                "fetch",
-                "--start-date", "2024-01-02",
-                "--end-date", "2024-01-01"
-            ])
+            result = self.runner.invoke(
+                app, ["fetch", "--start-date", "2024-01-02", "--end-date", "2024-01-01"]
+            )
             # Should handle invalid date range
-            assert result.exit_code != 0 or result.exit_code == 0  # Placeholder might not validate yet
+            assert (
+                result.exit_code != 0 or result.exit_code == 0
+            )  # Placeholder might not validate yet
 
 
 class TestFetchCommandPlaceholder:
@@ -116,7 +120,7 @@ class TestFetchCommandPlaceholder:
         """Set up test fixtures."""
         self.runner = CliRunner()
 
-    @patch('lse.commands.fetch.fetch_traces')
+    @patch("lse.commands.fetch.fetch_traces")
     def test_fetch_calls_real_function(self, mock_fetch):
         """Test that fetch command calls the real fetch function."""
         mock_fetch.return_value = {
@@ -124,17 +128,17 @@ class TestFetchCommandPlaceholder:
             "message": "Fetch and save operation completed",
             "traces_found": 1,
             "files_saved": 1,
-            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"]
+            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"],
         }
-        
+
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
             result = self.runner.invoke(app, ["fetch", "--trace-id", "test-123"])
-            
+
             # Should call the real fetch function
             if result.exit_code == 0:
                 mock_fetch.assert_called_once()
 
-    @patch('lse.commands.fetch.fetch_traces')
+    @patch("lse.commands.fetch.fetch_traces")
     def test_fetch_shows_real_output(self, mock_fetch):
         """Test that fetch command shows real API output."""
         mock_fetch.return_value = {
@@ -142,12 +146,12 @@ class TestFetchCommandPlaceholder:
             "message": "Fetch and save operation completed",
             "traces_found": 1,
             "files_saved": 1,
-            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"]
+            "saved_paths": ["./data/test-project/2025-08-29/abc123_123456.json"],
         }
-        
+
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
             result = self.runner.invoke(app, ["fetch", "--trace-id", "test-123"])
-            
+
             # Should show successful operation output
             assert result.exit_code == 0 or "completed" in result.stdout.lower()
 
@@ -163,15 +167,12 @@ class TestFetchCommandIntegration:
         """Test that fetch command creates output directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / "test_output"
-            
-            test_env = {
-                "LANGSMITH_API_KEY": "test-key",
-                "OUTPUT_DIR": str(output_dir)
-            }
-            
+
+            test_env = {"LANGSMITH_API_KEY": "test-key", "OUTPUT_DIR": str(output_dir)}
+
             with patch.dict(os.environ, test_env, clear=True):
                 result = self.runner.invoke(app, ["fetch", "--trace-id", "test"])
-                
+
                 # Output directory should be created (by configuration)
                 # This tests integration with configuration system
                 assert result.exit_code == 0 or result.exit_code == 1
@@ -185,13 +186,13 @@ OUTPUT_DIR=/test/output
 LOG_LEVEL=DEBUG
 """
             env_file.write_text(env_content)
-            
+
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
                 with patch.dict(os.environ, {}, clear=True):
                     result = self.runner.invoke(app, ["fetch", "--trace-id", "test"])
-                    
+
                     # Should load configuration from .env file
                     assert result.exit_code == 0 or result.exit_code == 1
             finally:
@@ -208,11 +209,11 @@ class TestFetchCommandErrorHandling:
     def test_fetch_handles_keyboard_interrupt(self):
         """Test that fetch command handles keyboard interrupt gracefully."""
         with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
-            with patch('lse.commands.fetch.fetch_traces') as mock_fetch:
+            with patch("lse.commands.fetch.fetch_traces") as mock_fetch:
                 mock_fetch.side_effect = KeyboardInterrupt()
-                
+
                 result = self.runner.invoke(app, ["fetch", "--trace-id", "test"])
-                
+
                 # Should handle KeyboardInterrupt and exit with code 130
                 assert result.exit_code == 130 or "cancelled" in result.stderr
 
@@ -220,7 +221,7 @@ class TestFetchCommandErrorHandling:
         """Test that fetch command handles configuration errors."""
         with patch.dict(os.environ, {}, clear=True):
             result = self.runner.invoke(app, ["fetch", "--trace-id", "test"])
-            
+
             # Should show configuration error
             assert result.exit_code == 1
             assert "Configuration Error" in result.stderr or "API key" in result.stderr.lower()

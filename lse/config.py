@@ -86,7 +86,7 @@ class Settings(BaseSettings):
         """Get HTTP headers for LangSmith API requests."""
         if not self.langsmith_api_key:
             raise ConfigurationError("API key is required for making requests")
-        
+
         return {
             "Authorization": f"Bearer {self.langsmith_api_key}",
             "Content-Type": "application/json",

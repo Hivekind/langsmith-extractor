@@ -59,12 +59,12 @@ class TestLogging:
         """Test that logging is configured with default level."""
         with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}, clear=True):
             from lse.cli import setup_logging
-            
+
             # Clear any existing handlers
             logging.getLogger().handlers.clear()
-            
+
             setup_logging("INFO")
-            
+
             logger = logging.getLogger("lse")
             assert logger.level == logging.INFO
 
@@ -72,12 +72,12 @@ class TestLogging:
         """Test that logging can be configured with DEBUG level."""
         with patch.dict(os.environ, {"LOG_LEVEL": "DEBUG"}, clear=True):
             from lse.cli import setup_logging
-            
+
             # Clear any existing handlers
             logging.getLogger().handlers.clear()
-            
+
             setup_logging("DEBUG")
-            
+
             logger = logging.getLogger("lse")
             assert logger.level == logging.DEBUG
 
@@ -86,21 +86,21 @@ class TestLogging:
         import sys
         from io import StringIO
         from unittest.mock import patch
-        
+
         with patch.dict(os.environ, {"LOG_LEVEL": "INFO"}, clear=True):
             from lse.cli import setup_logging
-            
+
             # Capture stderr
             captured_stderr = StringIO()
-            
-            with patch.object(sys, 'stderr', captured_stderr):
+
+            with patch.object(sys, "stderr", captured_stderr):
                 # Clear any existing handlers
                 logging.getLogger().handlers.clear()
-                
+
                 setup_logging("INFO")
                 logger = logging.getLogger("lse")
                 logger.info("Test message")
-                
+
                 stderr_output = captured_stderr.getvalue()
                 assert "Test message" in stderr_output
 
@@ -123,7 +123,7 @@ OUTPUT_DIR=/test/output
 LOG_LEVEL=DEBUG
 """
             env_file.write_text(env_content)
-            
+
             original_cwd = os.getcwd()
             try:
                 os.chdir(temp_dir)
@@ -140,7 +140,7 @@ LOG_LEVEL=DEBUG
         with patch.dict(os.environ, {}, clear=True):
             result = self.runner.invoke(app, ["--help"])
             assert result.exit_code == 0
-            
+
             result = self.runner.invoke(app, ["--version"])
             assert result.exit_code == 0
 

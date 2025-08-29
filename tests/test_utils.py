@@ -45,10 +45,10 @@ class TestProgressContext:
         progress = ProgressContext(description="Test operation")
         progress.start()
         assert progress.progress is not None
-        
+
         task_id = progress.add_task("Test task", total=5)
         progress.update(task_id, advance=2)
-        
+
         progress.stop()
         # After stop, progress should be None
         assert progress.progress is None
@@ -57,7 +57,7 @@ class TestProgressContext:
         """Test that progress context captures console output."""
         console = Console(file=StringIO(), force_terminal=False)
         progress = ProgressContext(description="Test", console=console)
-        
+
         with progress:
             task_id = progress.add_task("Task", total=1)
             progress.update(task_id, advance=1, description="Updated task")
@@ -67,10 +67,10 @@ class TestProgressContext:
         with ProgressContext(description="Multi-task test") as progress:
             task1 = progress.add_task("Task 1", total=10)
             task2 = progress.add_task("Task 2", total=20)
-            
+
             progress.update(task1, advance=5)
             progress.update(task2, advance=10)
-            
+
             # Should not raise errors
             assert isinstance(task1, int)
             assert isinstance(task2, int)
@@ -83,12 +83,12 @@ class TestSpinnerUtilities:
         """Test creating a basic spinner."""
         # Test that create_spinner returns a context manager
         spinner = create_spinner("Loading...")
-        assert hasattr(spinner, '__enter__')
-        assert hasattr(spinner, '__exit__')
+        assert hasattr(spinner, "__enter__")
+        assert hasattr(spinner, "__exit__")
 
     def test_create_spinner_with_custom_style(self):
         """Test creating spinner with custom style."""
-        with patch('lse.utils.Progress') as mock_progress:
+        with patch("lse.utils.Progress") as mock_progress:
             spinner = create_spinner("Custom loading...", spinner_style="dots")
             assert spinner is not None
 
@@ -101,7 +101,7 @@ class TestSpinnerUtilities:
     def test_spinner_no_colors(self):
         """Test that spinner respects no-color setting."""
         console = Console(file=StringIO(), force_terminal=False)
-        
+
         with create_spinner("Test", console=console) as spinner:
             # Should work without colors
             assert spinner is not None
@@ -112,7 +112,7 @@ class TestProgressBarUtilities:
 
     def test_create_progress_bar_basic(self):
         """Test creating a basic progress bar."""
-        with patch('lse.utils.Progress') as mock_progress:
+        with patch("lse.utils.Progress") as mock_progress:
             progress_bar = create_progress_bar("Processing files")
             assert progress_bar is not None
 
@@ -127,7 +127,7 @@ class TestProgressBarUtilities:
     def test_progress_bar_no_colors(self):
         """Test progress bar without colors."""
         console = Console(file=StringIO(), force_terminal=False, color_system=None)
-        
+
         with create_progress_bar("Test", console=console) as progress:
             task_id = progress.add_task("Task", total=10)
             for i in range(10):
@@ -140,6 +140,7 @@ class TestProgressDecorators:
 
     def test_with_progress_decorator(self):
         """Test the with_progress decorator."""
+
         @with_progress("Processing items")
         def sample_function(items, progress_callback=None):
             results = []
@@ -156,6 +157,7 @@ class TestProgressDecorators:
 
     def test_with_progress_no_callback(self):
         """Test with_progress decorator when no progress callback used."""
+
         @with_progress("Simple operation")
         def simple_function():
             return "done"
@@ -166,30 +168,27 @@ class TestProgressDecorators:
     def test_batch_progress_function(self):
         """Test batch_progress utility function."""
         items = list(range(10))
-        
+
         def process_item(item):
             time.sleep(0.01)  # Simulate work
             return item * 2
-        
+
         results = batch_progress(
-            items,
-            process_item,
-            description="Processing numbers",
-            batch_size=3
+            items, process_item, description="Processing numbers", batch_size=3
         )
-        
+
         expected = [i * 2 for i in range(10)]
         assert results == expected
 
     def test_batch_progress_with_error_handling(self):
         """Test batch_progress with error in processing."""
         items = [1, 2, "invalid", 4]
-        
+
         def process_item(item):
             if isinstance(item, str):
                 raise ValueError(f"Cannot process {item}")
             return item * 2
-        
+
         # Should handle errors gracefully and continue
         with pytest.raises(ValueError):
             batch_progress(items, process_item, "Processing with errors")
@@ -202,20 +201,20 @@ class TestProgressIntegration:
         """Test nested progress contexts don't interfere."""
         with ProgressContext("Outer operation") as outer:
             outer_task = outer.add_task("Outer task", total=2)
-            
+
             with ProgressContext("Inner operation") as inner:
                 inner_task = inner.add_task("Inner task", total=3)
                 inner.update(inner_task, advance=3)
-            
+
             outer.update(outer_task, advance=2)
 
     def test_progress_with_logging(self):
         """Test that progress works alongside logging."""
         import logging
-        
+
         # Set up a logger
         logger = logging.getLogger("test_progress")
-        
+
         with ProgressContext("Logged operation") as progress:
             task_id = progress.add_task("Task with logging", total=2)
             logger.info("Starting operation")
@@ -228,7 +227,7 @@ class TestProgressIntegration:
         """Test progress indication with error scenarios."""
         with ProgressContext("Error test") as progress:
             task_id = progress.add_task("Failing task", total=5)
-            
+
             try:
                 progress.update(task_id, advance=2)
                 raise Exception("Simulated error")
@@ -239,13 +238,13 @@ class TestProgressIntegration:
     def test_progress_performance(self):
         """Test that progress indication doesn't significantly slow operations."""
         import time
-        
+
         # Test without progress
         start_time = time.time()
         for i in range(100):
             time.sleep(0.001)  # Simulate small work unit
         no_progress_time = time.time() - start_time
-        
+
         # Test with progress
         start_time = time.time()
         with ProgressContext("Performance test") as progress:
@@ -254,6 +253,6 @@ class TestProgressIntegration:
                 progress.update(task_id, advance=1)
                 time.sleep(0.001)  # Simulate small work unit
         with_progress_time = time.time() - start_time
-        
+
         # Progress overhead should be reasonable (less than 50% slower)
         assert with_progress_time < no_progress_time * 1.5

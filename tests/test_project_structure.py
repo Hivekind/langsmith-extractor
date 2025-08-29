@@ -23,7 +23,7 @@ def test_lse_package_importable():
 def test_required_subdirectories_exist():
     """Test that required subdirectories exist in the lse package."""
     package_dir = Path(__file__).parent.parent / "lse"
-    
+
     required_dirs = ["commands"]
     for dir_name in required_dirs:
         dir_path = package_dir / dir_name
@@ -34,12 +34,12 @@ def test_required_subdirectories_exist():
 def test_init_files_exist():
     """Test that __init__.py files exist in required locations."""
     package_dir = Path(__file__).parent.parent / "lse"
-    
+
     init_locations = [
         package_dir / "__init__.py",
         package_dir / "commands" / "__init__.py",
     ]
-    
+
     for init_file in init_locations:
         assert init_file.exists(), f"{init_file} should exist"
         assert init_file.is_file(), f"{init_file} should be a file"
@@ -51,6 +51,7 @@ def test_console_script_entry_point():
     # The actual entry point is configured in pyproject.toml
     try:
         from lse.cli import app
+
         assert app is not None, "CLI app should be defined"
     except ImportError:
         pytest.fail("CLI app should be importable from lse.cli")
@@ -64,7 +65,7 @@ def test_required_dependencies_available():
         ("pydantic", "pydantic"),
         ("rich", "rich"),
     ]
-    
+
     for import_name, package_name in required_packages:
         try:
             __import__(import_name)
