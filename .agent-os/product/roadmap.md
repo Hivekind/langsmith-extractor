@@ -37,40 +37,66 @@
 
 **Status**: Phase 1 is now complete and production-ready! ✅
 
-## Phase 2: Data Transformation & Reporting
+## Phase 2: Error Rate Reporting (Zenrows Scraper)
 
-**Goal:** Transform raw trace data into actionable reports
-**Success Criteria:** Generate custom tabular reports and export to Google Sheets
+**Goal:** Generate daily error rate reports for zenrows_scraper failures
+**Success Criteria:** Output "Date, Total Traces, Zenrows Error Count" for any given day
 
-### Features
-
-- [ ] SQLite database schema - Design and implement structured storage `M`
-- [ ] Data transformation framework - Create extensible system for custom reports `L`
-- [ ] Built-in report templates - Common reports for latency, tokens, errors `M`
-- [ ] Google Sheets authentication - Set up OAuth2 for Sheets API `M`
-- [ ] Export to Google Sheets - Push transformed data with formatting `M`
-- [ ] Batch processing optimization - Handle large datasets efficiently `M`
-
-### Dependencies
-
-- Google Cloud project with Sheets API enabled
-- Report requirements from stakeholders
-
-## Phase 3: Advanced Features & Polish
-
-**Goal:** Add synchronization capabilities and improve user experience
-**Success Criteria:** Support incremental updates and provide comprehensive documentation
+### Target Report Format
+```
+Date,Total Traces,Zenrows Errors,Error Rate
+2025-08-28,220,10,4.5%
+2025-08-29,195,8,4.1%
+```
 
 ### Features
 
-- [ ] Incremental sync tracking - Track fetched traces to avoid duplicates `L`
-- [ ] Scheduled sync support - Enable cron-based automated fetching `M`
-- [ ] Multiple export formats - Add CSV and Excel export options `S`
-- [ ] Performance metrics - Add timing and resource usage reporting `S`
-- [ ] Comprehensive documentation - User guide and API documentation `M`
-- [ ] Unit and integration tests - Achieve 80% code coverage `L`
+- [ ] **Report command structure** - Add `lse report` command with date parameters `S`
+- [ ] **Trace analysis engine** - Parse JSON traces and detect sub-trace patterns `M`
+- [ ] **Zenrows error detection** - Find sub-traces named "zenrows_scraper" with Error status `S`
+- [ ] **Daily aggregation logic** - Group traces by date and calculate error rates `S`
+- [ ] **stdout output formatting** - CSV-style output for review and piping `S`
+- [ ] **Date range support** - Generate reports for single days or date ranges `S`
+- [ ] **Google Sheets export** - OAuth2 setup and automated sheet updates `M`
+
+### Command Interface Design
+```bash
+# Single day report
+lse report zenrows-errors --date 2025-08-28
+
+# Date range report  
+lse report zenrows-errors --start-date 2025-08-01 --end-date 2025-08-31
+
+# Output to Google Sheets
+lse report zenrows-errors --date 2025-08-28 --export-to sheets
+```
 
 ### Dependencies
+- Existing JSON trace files from Phase 1 fetch operations
+- Google Cloud project with Sheets API (for export feature only)
 
-- Production usage feedback from Phase 1 & 2
-- Identified performance bottlenecks
+## Phase 3: Advanced Reporting & Automation
+
+**Goal:** Expand reporting capabilities and add automation features
+**Success Criteria:** Support multiple report types and automated daily data collection
+
+### Features
+
+- [ ] **Generic report framework** - Extensible system for custom reports `M`
+- [ ] **Additional error patterns** - Support for other error types beyond zenrows `S`
+- [ ] **Performance reports** - Latency, token usage, and throughput analysis `M`
+- [ ] **Automated daily fetch** - Scheduled data collection with cron support `M`
+- [ ] **Historical data backfill** - Fetch and analyze past trace data `S`
+- [ ] **Multiple export formats** - CSV files and Excel export options `S`
+- [ ] **Report scheduling** - Automated report generation and delivery `L`
+- [ ] **Dashboard integration** - Connect to monitoring dashboards `L`
+
+### Future Report Types
+- Token usage trends over time
+- API endpoint performance analysis
+- Error pattern analysis across different components
+- Daily/weekly/monthly summary reports
+
+### Dependencies
+- Usage feedback from zenrows error reporting
+- Additional stakeholder report requirements
