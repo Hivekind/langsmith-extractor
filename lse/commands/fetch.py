@@ -28,20 +28,30 @@ def validate_date(date_str: str) -> datetime:
 def validate_date_range(
     start_date: Optional[str], end_date: Optional[str]
 ) -> tuple[Optional[datetime], Optional[datetime]]:
-    """Validate date range parameters."""
-    start_dt = None
-    end_dt = None
+    """Validate date range parameters with LangSmith timezone handling."""
+    if not start_date and not end_date:
+        return None, None
 
-    if start_date:
-        start_dt = validate_date(start_date)
+    if start_date and not end_date:
+        raise ValidationError("End date is required when start date is provided.")
 
-    if end_date:
-        end_dt = validate_date(end_date)
+    if end_date and not start_date:
+        raise ValidationError("Start date is required when end date is provided.")
 
-    if start_dt and end_dt and start_dt >= end_dt:
+    # Validate date format
+    start_parsed = validate_date(start_date) if start_date else None
+    end_parsed = validate_date(end_date) if end_date else None
+
+    if start_parsed and end_parsed and start_parsed >= end_parsed:
         raise ValidationError("Start date must be before end date.")
 
-    return start_dt, end_dt
+    # Convert to UTC datetimes with proper timezone handling
+    if start_date and end_date:
+        from lse.timezone import make_date_range_inclusive
+
+        return make_date_range_inclusive(start_date, end_date)
+
+    return None, None
 
 
 def fetch_traces(
@@ -99,9 +109,9 @@ def fetch_traces(
                     if project:
                         search_params["project_name"] = project
                     if start_date:
-                        search_params["start_time"] = start_date.isoformat()
+                        search_params["start_time"] = start_date
                     if end_date:
-                        search_params["end_time"] = end_date.isoformat()
+                        search_params["end_time"] = end_date
 
                     # Execute search
                     runs = client.search_runs(limit=limit, **search_params)

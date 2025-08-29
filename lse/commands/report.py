@@ -45,34 +45,50 @@ def validate_date(date_str: str) -> datetime:
 def validate_date_range(
     start_date: Optional[str], end_date: Optional[str]
 ) -> tuple[Optional[datetime], Optional[datetime]]:
-    """Validate date range parameters.
+    """Validate date range parameters with LangSmith timezone handling.
 
     Args:
         start_date: Start date string (optional)
         end_date: End date string (optional)
 
     Returns:
-        Tuple of parsed datetime objects
+        Tuple of parsed datetime objects in LangSmith timezone
 
     Raises:
         ValidationError: If date range is invalid
     """
-    start_dt = None
-    end_dt = None
+    if not start_date and not end_date:
+        return None, None
 
-    if start_date:
-        start_dt = validate_date(start_date)
+    if start_date and not end_date:
+        raise ValidationError("End date is required when start date is provided.")
 
-    if end_date:
-        end_dt = validate_date(end_date)
+    if end_date and not start_date:
+        raise ValidationError("Start date is required when end date is provided.")
 
-    if start_dt and end_dt and start_dt >= end_dt:
+    # Validate date format
+    start_parsed = validate_date(start_date) if start_date else None
+    end_parsed = validate_date(end_date) if end_date else None
+
+    if start_parsed and end_parsed and start_parsed >= end_parsed:
         raise ValidationError("Start date must be before end date.")
 
-    return start_dt, end_dt
+    # Convert to LangSmith timezone datetimes for analysis
+    if start_date and end_date:
+        from lse.timezone import LANGSMITH_TIMEZONE
+
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=LANGSMITH_TIMEZONE)
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        end_dt = end_dt.replace(
+            hour=23, minute=59, second=59, microsecond=999999, tzinfo=LANGSMITH_TIMEZONE
+        )
+        return start_dt, end_dt
+
+    return None, None
 
 
 def generate_zenrows_report(
+    project_name: Optional[str] = None,
     single_date: Optional[datetime] = None,
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
@@ -80,6 +96,7 @@ def generate_zenrows_report(
     """Generate zenrows error report for specified date(s).
 
     Args:
+        project_name: Project to analyze (optional, defaults to all projects)
         single_date: Single date to analyze (optional)
         start_date: Start of date range (optional)
         end_date: End of date range (optional)
@@ -90,51 +107,67 @@ def generate_zenrows_report(
     settings = get_settings()
     data_dir = Path(settings.output_dir)
 
-    # Find all project directories in the data directory
-    project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
-    if not project_dirs:
-        logger.warning(f"No project directories found in {data_dir}")
-        return "Date,Total Traces,Zenrows Errors,Error Rate\n"
-
     # Initialize the trace analyzer
     analyzer = TraceAnalyzer()
 
-    # Aggregate results across all projects
-    all_results = {}
-
     try:
-        for project_dir in project_dirs:
-            project_name = project_dir.name
+        if project_name:
+            # Single project analysis
             logger.info(f"Analyzing project: {project_name}")
 
-            # Analyze traces for this project
-            project_results = analyzer.analyze_zenrows_errors(
+            analysis_results = analyzer.analyze_zenrows_errors(
                 data_dir=data_dir,
                 project_name=project_name,
                 single_date=single_date,
                 start_date=start_date,
                 end_date=end_date,
             )
+        else:
+            # Multi-project analysis - aggregate across all projects
+            project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
+            if not project_dirs:
+                logger.warning(f"No project directories found in {data_dir}")
+                return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
-            # Merge results by date
-            for date_key, data in project_results.items():
-                if date_key in all_results:
-                    # Aggregate data for this date across projects
-                    all_results[date_key]["total_traces"] += data["total_traces"]
-                    all_results[date_key]["zenrows_errors"] += data["zenrows_errors"]
+            # Aggregate results across all projects
+            all_results = {}
+
+            for project_dir in project_dirs:
+                current_project = project_dir.name
+                logger.info(f"Analyzing project: {current_project}")
+
+                # Analyze traces for this project
+                project_results = analyzer.analyze_zenrows_errors(
+                    data_dir=data_dir,
+                    project_name=current_project,
+                    single_date=single_date,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                # Merge results by date
+                for date_key, data in project_results.items():
+                    if date_key in all_results:
+                        # Aggregate data for this date across projects
+                        all_results[date_key]["total_traces"] += data["total_traces"]
+                        all_results[date_key]["zenrows_errors"] += data["zenrows_errors"]
+                    else:
+                        all_results[date_key] = data.copy()
+
+            # Recalculate error rates after aggregation
+            for date_key, data in all_results.items():
+                if data["total_traces"] == 0:
+                    data["error_rate"] = 0.0
                 else:
-                    all_results[date_key] = data.copy()
+                    data["error_rate"] = round(
+                        (data["zenrows_errors"] / data["total_traces"]) * 100, 1
+                    )
 
-        # Recalculate error rates after aggregation
-        for date_key, data in all_results.items():
-            if data["total_traces"] == 0:
-                data["error_rate"] = 0.0
-            else:
-                data["error_rate"] = round((data["zenrows_errors"] / data["total_traces"]) * 100, 1)
+            analysis_results = all_results
 
         # Format results as CSV using formatter
         formatter = ReportFormatter()
-        return formatter.format_zenrows_report(all_results)
+        return formatter.format_zenrows_report(analysis_results)
 
     except Exception as e:
         logger.error(f"Analysis failed: {e}")
@@ -144,6 +177,9 @@ def generate_zenrows_report(
 
 @report_app.command("zenrows-errors")
 def zenrows_errors_command(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
+    ),
     date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Generate report for a specific date (YYYY-MM-DD)"
     ),
@@ -162,11 +198,14 @@ def zenrows_errors_command(
 
     Examples:
 
-      # Single day report
-      lse report zenrows-errors --date 2025-08-29
+      # Single day report for specific project
+      lse report zenrows-errors --project my-project --date 2025-08-29
 
-      # Date range report
-      lse report zenrows-errors --start-date 2025-08-01 --end-date 2025-08-31
+      # Date range report for specific project
+      lse report zenrows-errors --project my-project --start-date 2025-08-01 --end-date 2025-08-31
+
+      # All projects (aggregated)
+      lse report zenrows-errors --date 2025-08-29
     """
     logger.info("Starting zenrows error report generation")
 
@@ -187,11 +226,14 @@ def zenrows_errors_command(
 
         # Parse and validate date parameters
         if date:
-            # Single date mode
+            # Single date mode with timezone handling
             single_dt = validate_date(date)
-            logger.info(f"Generating report for single date: {date}")
+            from lse.timezone import LANGSMITH_TIMEZONE
 
-            report_output = generate_zenrows_report(single_date=single_dt)
+            single_dt = single_dt.replace(tzinfo=LANGSMITH_TIMEZONE)
+            logger.info(f"Generating report for single date: {date} (LangSmith timezone)")
+
+            report_output = generate_zenrows_report(project_name=project, single_date=single_dt)
 
         else:
             # Date range mode
@@ -204,7 +246,9 @@ def zenrows_errors_command(
 
             logger.info(f"Generating report for date range: {start_date} to {end_date}")
 
-            report_output = generate_zenrows_report(start_date=start_dt, end_date=end_dt)
+            report_output = generate_zenrows_report(
+                project_name=project, start_date=start_dt, end_date=end_dt
+            )
 
         # Output CSV to stdout
         typer.echo(report_output)

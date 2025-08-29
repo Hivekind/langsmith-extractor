@@ -69,7 +69,7 @@ class LangSmithClient:
             try:
                 # First try to list projects - this is a simpler API call
                 list(self.client.list_projects(limit=1))
-            except:
+            except Exception:
                 # Fallback: try to list root runs from any project
                 list(self.client.list_runs(is_root=True, limit=1))
 
@@ -132,24 +132,24 @@ class LangSmithClient:
             if start_time:
                 # Convert string to datetime if needed
                 if isinstance(start_time, str):
-                    from datetime import datetime
+                    from lse.timezone import parse_datetime_for_api
 
-                    list_params["start_time"] = datetime.fromisoformat(
-                        start_time.replace("Z", "+00:00")
-                    )
+                    list_params["start_time"] = parse_datetime_for_api(start_time)
                 else:
-                    list_params["start_time"] = start_time
+                    from lse.timezone import to_utc
+
+                    list_params["start_time"] = to_utc(start_time)
 
             if end_time:
                 # Convert string to datetime if needed
                 if isinstance(end_time, str):
-                    from datetime import datetime
+                    from lse.timezone import parse_datetime_for_api
 
-                    list_params["end_time"] = datetime.fromisoformat(
-                        end_time.replace("Z", "+00:00")
-                    )
+                    list_params["end_time"] = parse_datetime_for_api(end_time)
                 else:
-                    list_params["end_time"] = end_time
+                    from lse.timezone import to_utc
+
+                    list_params["end_time"] = to_utc(end_time)
 
             # Add any additional kwargs
             list_params.update(kwargs)

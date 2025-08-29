@@ -15,7 +15,7 @@ def test_lse_package_exists():
 def test_lse_package_importable():
     """Test that the lse package can be imported."""
     try:
-        import lse
+        import lse  # noqa: F401
     except ImportError:
         pytest.fail("lse package should be importable")
 

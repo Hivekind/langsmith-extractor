@@ -92,7 +92,7 @@ class TestDateParameterValidation:
 
     def test_validates_date_format(self):
         """Test that invalid date formats are rejected."""
-        with patch("lse.commands.report.generate_zenrows_report") as mock_report:
+        with patch("lse.commands.report.generate_zenrows_report"):
             result = self.runner.invoke(app, ["report", "zenrows-errors", "--date", "invalid-date"])
 
             # Should either succeed (if validation happens later) or fail with helpful message
@@ -101,7 +101,7 @@ class TestDateParameterValidation:
 
     def test_validates_date_range_order(self):
         """Test that start date must be before end date."""
-        with patch("lse.commands.report.generate_zenrows_report") as mock_report:
+        with patch("lse.commands.report.generate_zenrows_report"):
             result = self.runner.invoke(
                 app,
                 [
@@ -120,7 +120,7 @@ class TestDateParameterValidation:
 
     def test_requires_at_least_one_date_parameter(self):
         """Test that at least one date parameter is required."""
-        with patch("lse.commands.report.generate_zenrows_report") as mock_report:
+        with patch("lse.commands.report.generate_zenrows_report"):
             result = self.runner.invoke(app, ["report", "zenrows-errors"])
 
             # Should require at least one date parameter

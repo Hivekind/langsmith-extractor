@@ -88,13 +88,13 @@ class TestSpinnerUtilities:
 
     def test_create_spinner_with_custom_style(self):
         """Test creating spinner with custom style."""
-        with patch("lse.utils.Progress") as mock_progress:
+        with patch("lse.utils.Progress"):
             spinner = create_spinner("Custom loading...", spinner_style="dots")
             assert spinner is not None
 
     def test_spinner_context_manager(self):
         """Test using spinner as context manager."""
-        with create_spinner("Test spinner") as spinner:
+        with create_spinner("Test spinner"):
             # Should not raise errors
             time.sleep(0.1)  # Brief delay to simulate work
 
@@ -112,7 +112,7 @@ class TestProgressBarUtilities:
 
     def test_create_progress_bar_basic(self):
         """Test creating a basic progress bar."""
-        with patch("lse.utils.Progress") as mock_progress:
+        with patch("lse.utils.Progress"):
             progress_bar = create_progress_bar("Processing files")
             assert progress_bar is not None
 
