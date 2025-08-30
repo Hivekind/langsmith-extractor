@@ -8,14 +8,14 @@
 - [ ] Update `save_traces()` to handle creation dates for batch saves
 - [ ] Ensure backward compatibility with existing stored traces
 
-### Task 2: Add date extraction utilities
+### Task 2: Add UTC date extraction utilities
 - [ ] Create helper function to extract creation date from trace
-- [ ] Handle timezone conversion (UTC+08:00 to local date)
-- [ ] Add validation for date formats
+- [ ] Handle timezone conversion to UTC (from any timezone to GMT)
+- [ ] Add validation for UTC date formats
 
-### Task 3: Update tests for date handling
-- [ ] Update storage tests to verify creation date usage
-- [ ] Add tests for date extraction logic
+### Task 3: Update tests for UTC date handling
+- [ ] Update storage tests to verify UTC creation date usage
+- [ ] Add tests for UTC date extraction logic  
 - [ ] Test backward compatibility
 
 ## Phase 3.2: Archive Commands Infrastructure ⏳
@@ -39,8 +39,8 @@
 
 ### Task 7: Implement archive fetch command
 - [ ] Create fetch command function
-- [ ] Add date parameter parsing
-- [ ] Implement fetch all traces for date (no limit)
+- [ ] Add UTC date parameter parsing
+- [ ] Implement fetch all traces for UTC date (no limit)
 - [ ] Add overwrite confirmation logic
 - [ ] Add --force flag support
 
@@ -80,12 +80,12 @@
 
 ### Task 13: Implement archive restore command
 - [ ] Create restore command function
-- [ ] Add date range parameters
+- [ ] Add UTC date range parameters
 - [ ] List available archives on Drive
 - [ ] Download selected archives
 
 ### Task 14: Implement extraction logic
-- [ ] Extract zip files to correct folder structure
+- [ ] Extract zip files to correct UTC folder structure
 - [ ] Add progress indicator for extraction
 - [ ] Handle existing local files
 - [ ] Add overwrite confirmations

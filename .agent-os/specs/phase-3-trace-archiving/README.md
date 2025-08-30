@@ -22,11 +22,12 @@ This spec defines the implementation of trace archiving functionality that allow
 
 **Current Issue**: Traces are stored in folders based on the fetch date (today), not the trace creation date.
 
-**Solution**: Modify the storage logic to use the trace's `created_at` timestamp for determining the storage path.
+**Solution**: Modify the storage logic to use the trace's `created_at` timestamp converted to UTC for determining the storage path.
 
 **Changes Required**:
-- Update `TraceStorage._get_storage_path()` to accept and use trace creation date
-- Modify `save_trace()` and `save_traces()` to extract creation date from trace data
+- Update `TraceStorage._get_storage_path()` to accept and use UTC trace creation date
+- Modify `save_trace()` and `save_traces()` to extract creation date and convert to UTC
+- All date-based operations must work with UTC days (GMT timezone)
 - Ensure backward compatibility with existing stored traces
 
 ### 2. Archive Commands Structure
@@ -57,8 +58,8 @@ Additionally, the bare `lse archive` command should perform all three operations
 ```
 [Google Drive Folder from URL]/
   └── [project-name]/
-      ├── project-name_2025-08-29.zip
-      ├── project-name_2025-08-30.zip
+      ├── project-name_2025-08-29.zip  # UTC date
+      ├── project-name_2025-08-30.zip  # UTC date
       └── ...
 ```
 
@@ -70,7 +71,7 @@ Additionally, the bare `lse archive` command should perform all three operations
 
 ### 4. Zip File Structure
 
-**Naming Convention**: `[project-name]_[YYYY-MM-DD].zip`
+**Naming Convention**: `[project-name]_[YYYY-MM-DD].zip` (where date is in UTC)
 
 **Contents** (flat structure):
 ```
@@ -88,16 +89,16 @@ project-name_2025-08-29.zip
 ```bash
 lse archive fetch --date 2025-08-29 --project my-project [--force]
 ```
-- Fetches ALL traces for the specified date (no limit)
-- Stores in `data/[project]/[date]/` using trace creation date
+- Fetches ALL traces for the specified UTC date (no limit)
+- Stores in `data/[project]/[utc-date]/` using trace creation date converted to UTC
 - `--force` flag skips confirmation if folder exists
 
 #### `lse archive zip`
 ```bash
 lse archive zip --date 2025-08-29 --project my-project [--output-dir ./archives]
 ```
-- Creates zip from `data/[project]/[date]/` folder
-- Default output: `./archives/[project]_[date].zip`
+- Creates zip from `data/[project]/[utc-date]/` folder
+- Default output: `./archives/[project]_[utc-date].zip`
 - Includes all JSON files in flat structure
 
 #### `lse archive upload`
@@ -121,7 +122,7 @@ lse archive --date 2025-08-29 --project my-project [--force]
 lse archive restore --project my-project [--start-date 2025-08-01] [--end-date 2025-08-31] [--force]
 ```
 - Downloads zip files from Google Drive
-- Extracts to `data/[project]/[date]/` structure
+- Extracts to `data/[project]/[utc-date]/` structure
 - Default: restores all available dates
 - `--force` flag skips overwrite confirmations
 
@@ -231,7 +232,7 @@ GOOGLE_DRIVE_CREDENTIALS_PATH=./credentials.json  # for service account
 
 ## Success Criteria
 
-1. ✅ Traces are stored by creation date, not fetch date
+1. ✅ Traces are stored by UTC creation date, not fetch date
 2. ✅ Can fetch all traces for a specific date
 3. ✅ Can create zip files with proper naming
 4. ✅ Can upload to Google Drive with folder organization
