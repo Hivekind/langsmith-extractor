@@ -51,9 +51,23 @@ class Settings(BaseSettings):
         default="oauth2",
         description="Google Drive authentication type: 'oauth2' or 'service_account'",
     )
-    google_drive_credentials_path: Optional[Path] = Field(
+    google_drive_service_account_path: Optional[Path] = Field(
         default=None,
-        description="Path to Google Drive credentials JSON file (for service account)",
+        description="Path to service account JSON file (only for service_account auth type)",
+    )
+
+    # OAuth2 credentials (required for oauth2 auth type)
+    google_oauth_client_id: Optional[str] = Field(
+        default=None,
+        description="Google OAuth2 client ID",
+    )
+    google_oauth_client_secret: Optional[str] = Field(
+        default=None,
+        description="Google OAuth2 client secret",
+    )
+    google_oauth_project_id: Optional[str] = Field(
+        default=None,
+        description="Google Cloud project ID",
     )
 
     def __init__(self, **kwargs):
@@ -94,10 +108,10 @@ class Settings(BaseSettings):
             raise ValueError(f"Invalid auth type '{v}'. Must be one of: {', '.join(valid_types)}")
         return v.lower()
 
-    @field_validator("google_drive_credentials_path", mode="before")
+    @field_validator("google_drive_service_account_path", mode="before")
     @classmethod
-    def validate_credentials_path(cls, v) -> Optional[Path]:
-        """Convert credentials path to Path object."""
+    def validate_service_account_path(cls, v) -> Optional[Path]:
+        """Convert service account path to Path object."""
         if v is None:
             return None
         return Path(v)

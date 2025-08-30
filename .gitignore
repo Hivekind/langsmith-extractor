@@ -19,3 +19,8 @@ archives/
 
 # Environment files
 .env
+
+# Google Drive credentials and tokens
+credentials.json
+credentials.json.backup
+token.json

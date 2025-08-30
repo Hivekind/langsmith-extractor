@@ -82,33 +82,31 @@ class GoogleDriveClient:
             self._folder_id = self._get_folder_id_from_url(self.settings.google_drive_folder_url)
 
             # Set up authentication based on auth type
-            scopes = ["https://www.googleapis.com/auth/drive.file"]
+            # Use broader drive scope to access existing folders created outside the app
+            scopes = ["https://www.googleapis.com/auth/drive"]
             creds = None
 
             if self.settings.google_drive_auth_type == "service_account":
                 # Service account authentication
-                if not self.settings.google_drive_credentials_path:
+                if not self.settings.google_drive_service_account_path:
                     raise DriveError(
                         "Service account credentials path is required when using service_account auth. "
-                        "Set GOOGLE_DRIVE_CREDENTIALS_PATH in your .env file."
+                        "Set GOOGLE_DRIVE_SERVICE_ACCOUNT_PATH in your .env file."
                     )
 
-                if not self.settings.google_drive_credentials_path.exists():
+                if not self.settings.google_drive_service_account_path.exists():
                     raise DriveError(
                         f"Service account credentials file not found: "
-                        f"{self.settings.google_drive_credentials_path}"
+                        f"{self.settings.google_drive_service_account_path}"
                     )
 
                 creds = ServiceAccountCredentials.from_service_account_file(
-                    str(self.settings.google_drive_credentials_path), scopes=scopes
+                    str(self.settings.google_drive_service_account_path), scopes=scopes
                 )
 
             else:  # oauth2
                 # OAuth2 user authentication
                 token_path = Path("token.json")
-                credentials_path = self.settings.google_drive_credentials_path or Path(
-                    "credentials.json"
-                )
 
                 # Load existing token if available
                 if token_path.exists():
@@ -119,15 +117,42 @@ class GoogleDriveClient:
                     if creds and creds.expired and creds.refresh_token:
                         creds.refresh(Request())
                     else:
-                        if not credentials_path.exists():
+                        # Require OAuth credentials from environment variables
+                        if not (
+                            self.settings.google_oauth_client_id
+                            and self.settings.google_oauth_client_secret
+                            and self.settings.google_oauth_client_id.strip()
+                            and self.settings.google_oauth_client_secret.strip()
+                        ):
                             raise DriveError(
-                                f"OAuth2 credentials file not found: {credentials_path}. "
-                                "Download it from Google Cloud Console and save as credentials.json"
+                                "OAuth2 credentials not configured. Please set the following in your .env file:\n"
+                                "  GOOGLE_OAUTH_CLIENT_ID=your-client-id.apps.googleusercontent.com\n"
+                                "  GOOGLE_OAUTH_CLIENT_SECRET=your-client-secret\n"
+                                "  GOOGLE_OAUTH_PROJECT_ID=your-project-id (optional)\n\n"
+                                "Get these from Google Cloud Console:\n"
+                                "1. Go to https://console.cloud.google.com\n"
+                                "2. Select/create a project\n"
+                                "3. Enable Google Drive API\n"
+                                "4. Go to APIs & Services > Credentials\n"
+                                "5. Create OAuth 2.0 Client ID (Desktop application)"
                             )
 
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            str(credentials_path), scopes
-                        )
+                        # Build credentials config from environment variables
+                        client_config = {
+                            "installed": {
+                                "client_id": self.settings.google_oauth_client_id,
+                                "client_secret": self.settings.google_oauth_client_secret,
+                                "project_id": self.settings.google_oauth_project_id
+                                or "lse-project",
+                                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                                "token_uri": "https://oauth2.googleapis.com/token",
+                                "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+                                "redirect_uris": ["http://localhost"],
+                            }
+                        }
+
+                        flow = InstalledAppFlow.from_client_config(client_config, scopes)
+                        logger.info("Using OAuth2 credentials from environment variables")
                         creds = flow.run_local_server(port=0)
 
                     # Save the credentials for the next run
@@ -162,7 +187,16 @@ class GoogleDriveClient:
         try:
             # Search for existing project folder
             query = f"'{self._folder_id}' in parents and name='{project_name}' and trashed=false"
-            results = self._service.files().list(q=query, fields="files(id, name)").execute()
+            results = (
+                self._service.files()
+                .list(
+                    q=query,
+                    fields="files(id, name)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
+                .execute()
+            )
             items = results.get("files", [])
 
             if items:
@@ -178,7 +212,11 @@ class GoogleDriveClient:
                 "mimeType": "application/vnd.google-apps.folder",
             }
 
-            folder = self._service.files().create(body=folder_metadata, fields="id").execute()
+            folder = (
+                self._service.files()
+                .create(body=folder_metadata, fields="id", supportsAllDrives=True)
+                .execute()
+            )
 
             project_folder_id = folder.get("id")
             logger.info(f"Created project folder: {project_name} ({project_folder_id})")
@@ -207,7 +245,12 @@ class GoogleDriveClient:
             query = f"'{project_folder_id}' in parents and name contains '.zip' and trashed=false"
             results = (
                 self._service.files()
-                .list(q=query, fields="files(id, name, size, createdTime, modifiedTime)")
+                .list(
+                    q=query,
+                    fields="files(id, name, size, createdTime, modifiedTime)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
                 .execute()
             )
 
@@ -253,7 +296,16 @@ class GoogleDriveClient:
 
             # Check if file already exists
             query = f"'{project_folder_id}' in parents and name='{filename}' and trashed=false"
-            results = self._service.files().list(q=query, fields="files(id, name)").execute()
+            results = (
+                self._service.files()
+                .list(
+                    q=query,
+                    fields="files(id, name)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
+                .execute()
+            )
             existing_files = results.get("files", [])
 
             if existing_files and not force:
@@ -272,7 +324,7 @@ class GoogleDriveClient:
                 file_id = existing_files[0]["id"]
                 updated_file = (
                     self._service.files()
-                    .update(fileId=file_id, media_body=media, fields="id")
+                    .update(fileId=file_id, media_body=media, fields="id", supportsAllDrives=True)
                     .execute()
                 )
 
@@ -284,7 +336,9 @@ class GoogleDriveClient:
 
                 uploaded_file = (
                     self._service.files()
-                    .create(body=file_metadata, media_body=media, fields="id")
+                    .create(
+                        body=file_metadata, media_body=media, fields="id", supportsAllDrives=True
+                    )
                     .execute()
                 )
 
@@ -314,7 +368,16 @@ class GoogleDriveClient:
 
             # Find the file
             query = f"'{project_folder_id}' in parents and name='{filename}' and trashed=false"
-            results = self._service.files().list(q=query, fields="files(id, name)").execute()
+            results = (
+                self._service.files()
+                .list(
+                    q=query,
+                    fields="files(id, name)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
+                .execute()
+            )
             files = results.get("files", [])
 
             if not files:
@@ -368,7 +431,7 @@ class GoogleDriveClient:
             # Test folder access
             folder_info = (
                 self._service.files()
-                .get(fileId=self._folder_id, fields="id, name, permissions")
+                .get(fileId=self._folder_id, fields="id, name, permissions", supportsAllDrives=True)
                 .execute()
             )
 

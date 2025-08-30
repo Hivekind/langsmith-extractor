@@ -158,10 +158,18 @@ class LangSmithClient:
             if "is_root" not in list_params:
                 list_params["is_root"] = True
 
-            # Execute search
-            runs = list(self.client.list_runs(limit=limit, **list_params))
+            # Execute search with proper pagination handling
+            if limit is None:
+                # When no limit specified, fetch ALL runs by iterating through pages
+                runs = []
+                for run in self.client.list_runs(**list_params):
+                    runs.append(run)
+                logger.debug(f"Search returned {len(runs)} runs (all pages)")
+            else:
+                # When limit specified, use it directly
+                runs = list(self.client.list_runs(limit=limit, **list_params))
+                logger.debug(f"Search returned {len(runs)} runs (limited)")
 
-            logger.debug(f"Search returned {len(runs)} runs")
             return runs
 
         except Exception as e:
