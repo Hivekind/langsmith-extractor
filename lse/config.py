@@ -42,6 +42,20 @@ class Settings(BaseSettings):
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
+    # Google Drive Configuration (for archive functionality)
+    google_drive_folder_url: Optional[str] = Field(
+        default=None,
+        description="Google Drive folder URL for storing archived traces",
+    )
+    google_drive_auth_type: str = Field(
+        default="oauth2",
+        description="Google Drive authentication type: 'oauth2' or 'service_account'",
+    )
+    google_drive_credentials_path: Optional[Path] = Field(
+        default=None,
+        description="Path to Google Drive credentials JSON file (for service account)",
+    )
+
     def __init__(self, **kwargs):
         """Initialize settings with .env file loading."""
         # Load .env file from current working directory
@@ -69,6 +83,23 @@ class Settings(BaseSettings):
     @classmethod
     def validate_output_dir(cls, v) -> Path:
         """Convert output directory to Path object."""
+        return Path(v)
+
+    @field_validator("google_drive_auth_type")
+    @classmethod
+    def validate_auth_type(cls, v: str) -> str:
+        """Validate Google Drive auth type is supported."""
+        valid_types = {"oauth2", "service_account"}
+        if v.lower() not in valid_types:
+            raise ValueError(f"Invalid auth type '{v}'. Must be one of: {', '.join(valid_types)}")
+        return v.lower()
+
+    @field_validator("google_drive_credentials_path", mode="before")
+    @classmethod
+    def validate_credentials_path(cls, v) -> Optional[Path]:
+        """Convert credentials path to Path object."""
+        if v is None:
+            return None
         return Path(v)
 
     def validate_required_fields(self) -> None:

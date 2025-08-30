@@ -12,6 +12,7 @@ from langsmith.schemas import Run
 
 from lse.config import Settings
 from lse.exceptions import LSEError
+from lse.timezone import to_langsmith_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,47 @@ class TraceStorage:
         """
         self.settings = settings
         self.output_dir = Path(settings.output_dir)
+
+    def _extract_creation_date(self, run: Run) -> datetime:
+        """Extract creation date from a trace run.
+
+        Args:
+            run: LangSmith run object
+
+        Returns:
+            Creation date of the trace
+        """
+        # Get the start_time from the run
+        start_time = getattr(run, "start_time", None)
+
+        if start_time is None:
+            logger.warning(f"No start_time found for run {run.id}, using current time")
+            return datetime.now()
+
+        # Handle different start_time formats
+        if isinstance(start_time, str):
+            # Parse string format: "2025-08-29 06:44:12.622037"
+            try:
+                # Try parsing with microseconds
+                dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S.%f")
+            except ValueError:
+                try:
+                    # Try parsing without microseconds
+                    dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    logger.warning(f"Could not parse start_time '{start_time}' for run {run.id}")
+                    return datetime.now()
+        elif isinstance(start_time, datetime):
+            dt = start_time
+        else:
+            logger.warning(f"Unexpected start_time type {type(start_time)} for run {run.id}")
+            return datetime.now()
+
+        # Convert to LangSmith timezone if naive
+        if dt.tzinfo is None:
+            dt = to_langsmith_timezone(dt)
+
+        return dt
 
     def _ensure_directory(self, path: Path) -> None:
         """Ensure directory exists, creating if necessary.
@@ -56,7 +98,7 @@ class TraceStorage:
 
         Args:
             project_name: Project name for organization
-            date: Date for organization (defaults to today)
+            date: Date for organization (should be trace creation date)
 
         Returns:
             Path where traces should be stored
@@ -70,8 +112,9 @@ class TraceStorage:
         else:
             storage_path = storage_path / "unknown-project"
 
-        # Add date directory
+        # Add date directory - use provided date (should be trace creation date)
         if date is None:
+            logger.warning("No date provided for storage path, using current date")
             date = datetime.now()
 
         date_str = date.strftime("%Y-%m-%d")
@@ -142,7 +185,7 @@ class TraceStorage:
         Args:
             run: LangSmith run to save
             project_name: Project name for organization
-            timestamp: Timestamp for file naming
+            timestamp: Timestamp for file naming (defaults to current time)
 
         Returns:
             Path to the saved file
@@ -151,11 +194,16 @@ class TraceStorage:
             StorageError: If save operation fails
         """
         try:
-            # Determine storage location
-            storage_path = self._get_storage_path(project_name, timestamp)
+            # Extract creation date from the trace for storage path
+            creation_date = self._extract_creation_date(run)
+
+            # Determine storage location using creation date
+            storage_path = self._get_storage_path(project_name, creation_date)
             self._ensure_directory(storage_path)
 
-            # Generate filename
+            # Generate filename using timestamp (for uniqueness)
+            if timestamp is None:
+                timestamp = datetime.now()
             filename = self._generate_filename(run.id, timestamp)
             file_path = storage_path / filename
 
@@ -168,6 +216,7 @@ class TraceStorage:
                 "project_name": project_name,
                 "run_id": str(run.id),
                 "extractor_version": "0.1.0",
+                "trace_creation_date": creation_date.isoformat(),
             }
 
             # Create final JSON structure
@@ -179,7 +228,9 @@ class TraceStorage:
             # Write atomically using temporary file
             self._write_json_atomic(file_path, trace_file)
 
-            logger.info(f"Saved trace {run.id} to {file_path}")
+            logger.info(
+                f"Saved trace {run.id} created on {creation_date.strftime('%Y-%m-%d')} to {file_path}"
+            )
             return file_path
 
         except Exception as e:

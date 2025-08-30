@@ -11,6 +11,7 @@ from lse.config import get_settings
 from lse.exceptions import ConfigurationError, LSEError
 from lse.commands.fetch import fetch_command
 from lse.commands.report import report_app
+from lse.commands.archive import archive_app
 
 
 app = typer.Typer(
@@ -132,6 +133,7 @@ def handle_exceptions(func):
 
 app.command("fetch")(handle_exceptions(fetch_command))
 app.add_typer(report_app, name="report")
+app.add_typer(archive_app, name="archive")
 
 
 if __name__ == "__main__":
