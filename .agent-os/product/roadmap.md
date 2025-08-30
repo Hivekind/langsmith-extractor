@@ -88,7 +88,47 @@ lse report zenrows-errors --date 2025-08-28 --export-to sheets
 - Existing JSON trace files from Phase 1 fetch operations
 - Google Cloud project with Sheets API (for export feature only)
 
-## Phase 3: Advanced Reporting & Automation
+## Phase 3: Trace Archiving & Google Drive Integration
+
+**Goal:** Archive complete daily trace datasets to Google Drive with restore capabilities
+**Success Criteria:** Successfully fetch, zip, and upload daily trace data to Google Drive with ability to restore
+
+### Features
+
+- [ ] **Fix trace date storage** - Store traces by creation date, not fetch date `S`
+- [ ] **Archive fetch command** - Fetch full trace data for a specific date `M`
+- [ ] **Archive zip command** - Compress daily traces into zip files `S`
+- [ ] **Google Drive upload** - Upload zip archives to configured Drive folder `M`
+- [ ] **Combined archive command** - Single command to fetch, zip, and upload `S`
+- [ ] **Restore from Drive** - Download and extract archived traces from Drive `M`
+- [ ] **Overwrite protection** - Confirm before overwriting local or remote data `S`
+- [ ] **Progress indicators** - Show progress during long-running operations `S`
+
+### Command Interface
+```bash
+# Individual steps
+lse archive fetch --date 2025-08-29 --project my-project
+lse archive zip --date 2025-08-29 --project my-project
+lse archive upload --date 2025-08-29 --project my-project
+
+# Combined operation
+lse archive --date 2025-08-29 --project my-project
+
+# Restore from Google Drive
+lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-project
+```
+
+### Archive Structure
+- **Local storage**: `data/[project-name]/[trace-creation-date]/trace-files.json`
+- **Zip naming**: `[project-name]_[trace-creation-date].zip`
+- **Drive structure**: `[configured-folder]/[project-name]/[project-name]_[date].zip`
+
+### Dependencies
+- Google Drive API credentials (OAuth2 or service account)
+- Configured GOOGLE_DRIVE_FOLDER_URL in .env
+- Fixed trace date storage (store by creation date)
+
+## Phase 4: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
 **Success Criteria:** Support multiple report types and automated daily data collection
