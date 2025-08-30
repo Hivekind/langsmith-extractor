@@ -7,6 +7,18 @@ from typing import Union
 LANGSMITH_TIMEZONE = timezone(timedelta(hours=8))
 
 
+def parse_date(date_str: str) -> datetime:
+    """Parse date string to datetime.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        Datetime object at midnight
+    """
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+
 def to_langsmith_timezone(dt: datetime) -> datetime:
     """Convert datetime to LangSmith timezone (UTC+08:00).
 

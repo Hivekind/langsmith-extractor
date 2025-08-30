@@ -48,7 +48,6 @@ def archive_fetch(
     try:
         from lse.client import LangSmithClient
         from lse.storage import TraceStorage
-        from lse.timezone import make_date_range_inclusive
         from lse.utils import ProgressContext
         from datetime import datetime
 
@@ -84,14 +83,28 @@ def archive_fetch(
         client = LangSmithClient(settings)
         storage = TraceStorage(settings)
 
-        # Create date range (same date for start and end to get that specific day)
-        start_dt, end_dt = make_date_range_inclusive(date, date)
+        # Use wider date range with buffer to ensure we catch all traces
+        # Some traces may have timestamps slightly outside the exact 24-hour window
+        from datetime import timedelta
+        from lse.timezone import parse_date, to_utc, LANGSMITH_TIMEZONE
 
-        console.print(f"[dim]Fetching traces from {start_dt} to {end_dt} (UTC)[/dim]")
+        # Parse target date and add buffer
+        target_date = parse_date(date)
+
+        # Create wide buffer: start 10 hours before target date, end 14 hours after
+        buffer_start = target_date - timedelta(hours=10)
+        buffer_end = target_date + timedelta(days=1, hours=14)
+
+        # Convert to UTC for API
+        start_dt = to_utc(buffer_start.replace(tzinfo=LANGSMITH_TIMEZONE))
+        end_dt = to_utc(buffer_end.replace(tzinfo=LANGSMITH_TIMEZONE))
+
+        console.print(f"[dim]Fetching traces with wide buffer: {start_dt} to {end_dt} (UTC)[/dim]")
+        console.print(f"[dim]Will filter to only save traces created on {date}[/dim]")
 
         # Fetch traces with progress
-        with ProgressContext("Fetching traces") as progress_callback:
-            # Fetch ALL traces for this date (no limit)
+        with ProgressContext("Fetching traces"):
+            # Fetch ALL traces in the wide buffer (no limit)
             runs = client.search_runs(
                 project_name=project,
                 start_time=start_dt.isoformat(),
@@ -99,23 +112,52 @@ def archive_fetch(
                 limit=None,  # No limit - fetch everything
             )
 
+        console.print(f"[dim]Debug: Raw API returned {len(runs)} total runs[/dim]")
+
         if not runs:
             console.print(f"[yellow]No traces found for {project} on {date}[/yellow]")
             return
 
-        console.print(f"[green]Found {len(runs)} traces. Saving to local storage...[/green]")
+        console.print(
+            f"[green]Found {len(runs)} traces. Filtering and saving to local storage...[/green]"
+        )
+
+        # Filter traces to only include ones created on the requested date
+        from lse.timezone import to_langsmith_timezone
+
+        requested_date_str = date
+
+        filtered_runs = []
+        for run in runs:
+            # Extract creation date from the run
+            creation_date = storage._extract_creation_date(run)
+            creation_date_langsmith = to_langsmith_timezone(creation_date)
+            creation_date_str = creation_date_langsmith.strftime("%Y-%m-%d")
+
+            # Only keep traces that were actually created on the requested date
+            if creation_date_str == requested_date_str:
+                filtered_runs.append(run)
+
+        if not filtered_runs:
+            console.print(f"[yellow]No traces found that were created on {date}[/yellow]")
+            console.print(
+                f"[dim]Found {len(runs)} traces in date range, but none created on requested date[/dim]"
+            )
+            return
+
+        discarded_count = len(runs) - len(filtered_runs)
+        if discarded_count > 0:
+            console.print(f"[dim]Filtered out {discarded_count} traces from other dates[/dim]")
+
+        console.print(f"[green]Saving {len(filtered_runs)} traces created on {date}[/green]")
 
         # Save traces with progress
-        with ProgressContext("Saving traces") as progress_callback:
+        with ProgressContext("Saving traces"):
             saved_paths = storage.save_traces(
-                runs,
+                filtered_runs,
                 project_name=project,
                 timestamp=None,  # Use current timestamp for filename uniqueness
             )
-
-            # Update progress
-            for i, _ in enumerate(saved_paths):
-                progress_callback(i + 1, len(saved_paths))
 
         console.print(f"[green]✅ Successfully fetched and saved {len(saved_paths)} traces[/green]")
         console.print(f"[dim]Traces saved to: {target_folder}[/dim]")
