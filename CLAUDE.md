@@ -2,9 +2,29 @@
 
 This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with the langsmith-extractor codebase.
 
-## Critical: Agent-OS Integration
+## CRITICAL: Agent-OS Rules (MUST FOLLOW)
 
-**This project uses Agent-OS for workflow management and standards. You MUST refer to and follow all Agent-OS managed context and instructions.**
+**This project uses Agent-OS for workflow management and standards. You MUST refer to and follow ALL Agent-OS managed context and instructions.**
+
+### 🚨 MANDATORY Agent-OS Rules - Follow BEFORE Any Work
+
+#### Git Workflow Rules (NEVER VIOLATE)
+- **NEVER create git commits** without explicit user approval
+- **DO** make code changes and stage them with `git add` when requested
+- **DO** show changes with `git status` and `git diff` before asking about commits
+- **DO** wait for explicit user approval: "create a commit", "commit the changes", "make a commit"
+- **DO NOT** commit after completing implementation - show changes and wait for approval
+
+#### Code Quality Rules (ALWAYS REQUIRED)
+- **ALWAYS run linting** after any code changes: `uv run ruff check --fix . && uv run ruff format .`
+- **NEVER present completed work** without running linting first
+- Fix all linting issues before showing results to user
+
+#### Workflow Integration Rules
+- **USE Agent-OS subagents** for complex git workflows when available
+- **FOLLOW standards** defined in `.agent-os/standards/`
+- **REFERENCE active specs** in `.agent-os/specs/` for current work
+- **CHECK Agent-OS instructions** before making architectural decisions
 
 ### Key Agent-OS Files to Reference
 
