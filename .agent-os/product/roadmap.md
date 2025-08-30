@@ -37,7 +37,7 @@
 
 **Status**: Phase 1 is now complete and production-ready! ✅
 
-## Phase 2: Error Rate Reporting (Zenrows Scraper)
+## Phase 2: Error Rate Reporting (Zenrows Scraper) ✅ COMPLETED
 
 **Goal:** Generate daily error rate reports for zenrows_scraper failures
 **Success Criteria:** Output "Date, Total Traces, Zenrows Error Count" for any given day
@@ -51,25 +51,38 @@ Date,Total Traces,Zenrows Errors,Error Rate
 
 ### Features
 
-- [ ] **Report command structure** - Add `lse report` command with date parameters `S`
-- [ ] **Trace analysis engine** - Parse JSON traces and detect sub-trace patterns `M`
-- [ ] **Zenrows error detection** - Find sub-traces named "zenrows_scraper" with Error status `S`
-- [ ] **Daily aggregation logic** - Group traces by date and calculate error rates `S`
-- [ ] **stdout output formatting** - CSV-style output for review and piping `S`
-- [ ] **Date range support** - Generate reports for single days or date ranges `S`
+- [x] **Report command structure** - Add `lse report` command with date parameters `S` ✅
+- [x] **Trace analysis engine** - Parse JSON traces and detect sub-trace patterns `M` ✅
+- [x] **Zenrows error detection** - Find sub-traces named "zenrows_scraper" with Error status `S` ✅
+- [x] **Daily aggregation logic** - Group traces by date and calculate error rates `S` ✅
+- [x] **stdout output formatting** - CSV-style output for review and piping `S` ✅
+- [x] **Date range support** - Generate reports for single days or date ranges `S` ✅
+- [x] **Project-scoped reporting** - Filter reports by project or aggregate all projects `S` ✅
+- [x] **UTC+08:00 timezone support** - Proper timezone handling for LangSmith account `S` ✅
 - [ ] **Google Sheets export** - OAuth2 setup and automated sheet updates `M`
 
 ### Command Interface Design
 ```bash
-# Single day report
+# Single day report for specific project
+lse report zenrows-errors --project my-project --date 2025-08-28
+
+# Date range report for specific project
+lse report zenrows-errors --project my-project --start-date 2025-08-01 --end-date 2025-08-31
+
+# All projects (aggregated)
 lse report zenrows-errors --date 2025-08-28
 
-# Date range report  
-lse report zenrows-errors --start-date 2025-08-01 --end-date 2025-08-31
-
-# Output to Google Sheets
+# Output to Google Sheets (future)
 lse report zenrows-errors --date 2025-08-28 --export-to sheets
 ```
+
+### Completed Implementation Details
+
+✅ **Recursive trace analysis** - Searches all child_runs recursively for zenrows_scraper errors  
+✅ **Timezone-aware date handling** - Dates interpreted in UTC+08:00, converted to UTC for API  
+✅ **Inclusive date ranges** - End dates include full day (23:59:59)  
+✅ **65+ comprehensive tests** - Full test coverage with TDD approach  
+✅ **Live data validation** - Successfully tested with 400+ real traces
 
 ### Dependencies
 - Existing JSON trace files from Phase 1 fetch operations
