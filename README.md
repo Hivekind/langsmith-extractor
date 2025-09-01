@@ -239,4 +239,4 @@ This project was developed by Hivekind with AI assistance from Claude Code. Whil
 
 ## License
 
-[License information will be added in the next update]
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
