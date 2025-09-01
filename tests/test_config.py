@@ -17,7 +17,7 @@ class TestSettings:
     def test_default_values(self):
         """Test default configuration values."""
         with patch.dict(os.environ, {}, clear=True):
-            settings = Settings()
+            settings = Settings(_env_file=False)
             assert settings.langsmith_api_url == "https://api.smith.langchain.com"
             assert settings.output_dir == Path("./data")
             assert settings.log_level == "INFO"
@@ -25,10 +25,9 @@ class TestSettings:
     def test_required_api_key_missing_raises_error(self):
         """Test that missing API key raises ConfigurationError."""
         with patch.dict(os.environ, {}, clear=True):
-            # Also patch dotenv loading to ensure completely clean environment
-            with patch("lse.config.load_dotenv"):
-                with pytest.raises(ConfigurationError, match="LANGSMITH_API_KEY is required"):
-                    Settings(_env_file=None).validate_required_fields()
+            settings = Settings(_env_file=False)
+            with pytest.raises(ConfigurationError, match="LANGSMITH_API_KEY is required"):
+                settings.validate_required_fields()
 
     def test_env_variable_override(self):
         """Test that environment variables override defaults."""
@@ -40,7 +39,7 @@ class TestSettings:
         }
 
         with patch.dict(os.environ, test_env, clear=True):
-            settings = Settings()
+            settings = Settings(_env_file=False)
             assert settings.langsmith_api_key == "test-key-123"
             assert settings.langsmith_api_url == "https://custom-api.com"
             assert settings.output_dir == Path("/custom/path")
@@ -57,18 +56,13 @@ LOG_LEVEL=WARNING
 """
             env_file.write_text(env_content)
 
-            # Change to temp directory to test .env loading
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(temp_dir)
-                with patch.dict(os.environ, {}, clear=True):
-                    settings = Settings()
-                    assert settings.langsmith_api_key == "from-file-123"
-                    assert settings.langsmith_api_url == "https://from-file.com"
-                    assert settings.output_dir == Path("/from/file")
-                    assert settings.log_level == "WARNING"
-            finally:
-                os.chdir(original_cwd)
+            # Test loading from specific .env file
+            with patch.dict(os.environ, {}, clear=True):
+                settings = Settings(_env_file=env_file)
+                assert settings.langsmith_api_key == "from-file-123"
+                assert settings.langsmith_api_url == "https://from-file.com"
+                assert settings.output_dir == Path("/from/file")
+                assert settings.log_level == "WARNING"
 
     def test_env_variables_override_dotenv(self):
         """Test that environment variables take precedence over .env file."""
@@ -79,20 +73,15 @@ LANGSMITH_API_URL=https://from-file.com
 """
             env_file.write_text(env_content)
 
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(temp_dir)
-                test_env = {
-                    "LANGSMITH_API_KEY": "from-env",
-                    "LANGSMITH_API_URL": "https://from-env.com",
-                }
+            test_env = {
+                "LANGSMITH_API_KEY": "from-env",
+                "LANGSMITH_API_URL": "https://from-env.com",
+            }
 
-                with patch.dict(os.environ, test_env, clear=True):
-                    settings = Settings()
-                    assert settings.langsmith_api_key == "from-env"
-                    assert settings.langsmith_api_url == "https://from-env.com"
-            finally:
-                os.chdir(original_cwd)
+            with patch.dict(os.environ, test_env, clear=True):
+                settings = Settings(_env_file=env_file)
+                assert settings.langsmith_api_key == "from-env"
+                assert settings.langsmith_api_url == "https://from-env.com"
 
     def test_output_dir_creation(self):
         """Test that output directory is created if it doesn't exist."""
@@ -106,7 +95,7 @@ LANGSMITH_API_URL=https://from-file.com
             }
 
             with patch.dict(os.environ, test_env, clear=True):
-                settings = Settings()
+                settings = Settings(_env_file=False)
                 settings.ensure_output_dir()
                 assert output_path.exists()
                 assert output_path.is_dir()
@@ -120,7 +109,7 @@ LANGSMITH_API_URL=https://from-file.com
 
         with patch.dict(os.environ, test_env, clear=True):
             with pytest.raises(ValueError, match="Invalid log level"):
-                Settings()
+                Settings(_env_file=False)
 
     def test_api_url_validation(self):
         """Test that invalid API URLs raise validation error."""
@@ -131,7 +120,7 @@ LANGSMITH_API_URL=https://from-file.com
 
         with patch.dict(os.environ, test_env, clear=True):
             with pytest.raises(ValueError, match="Invalid URL format"):
-                Settings()
+                Settings(_env_file=False)
 
 
 class TestConfigurationIntegration:
@@ -147,7 +136,7 @@ class TestConfigurationIntegration:
         }
 
         with patch.dict(os.environ, test_env, clear=True):
-            settings = Settings()
+            settings = Settings(_env_file=False)
             settings.validate_required_fields()
 
             assert settings.langsmith_api_key == "sk-test-key-123"

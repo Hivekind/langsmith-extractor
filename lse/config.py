@@ -70,11 +70,25 @@ class Settings(BaseSettings):
         description="Google Cloud project ID",
     )
 
-    def __init__(self, **kwargs):
-        """Initialize settings with .env file loading."""
-        # Load .env file from current working directory
-        load_dotenv(override=False)
-        super().__init__(**kwargs)
+    def __init__(self, _env_file=None, **kwargs):
+        """Initialize settings with .env file loading.
+
+        Args:
+            _env_file: Path to .env file to load (for testing).
+                      If None, uses default behavior.
+                      If False, disables all .env file loading.
+            **kwargs: Field values to override
+        """
+        # Disable .env file loading if explicitly requested
+        if _env_file is False:
+            # Override the env_file setting to prevent loading
+            super().__init__(_env_file=None, **kwargs)
+        else:
+            # Load dotenv if a specific path is provided
+            if _env_file is not None:
+                load_dotenv(dotenv_path=_env_file, override=False)
+            # Use normal initialization (which will load .env from model_config)
+            super().__init__(**kwargs)
 
     @field_validator("log_level")
     @classmethod
