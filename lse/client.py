@@ -154,7 +154,7 @@ class LangSmithClient:
             # Add any additional kwargs
             list_params.update(kwargs)
 
-            # Default to fetching root runs only (traces)
+            # Default to fetching root runs only (traces) to match UI behavior
             if "is_root" not in list_params:
                 list_params["is_root"] = True
 
@@ -174,6 +174,31 @@ class LangSmithClient:
 
         except Exception as e:
             raise APIError(f"Failed to search runs: {e}") from e
+
+    @with_retry()
+    def fetch_trace_hierarchy(self, trace_id: Union[str, UUID]) -> List[Run]:
+        """Fetch all runs in a trace hierarchy (root + all child runs).
+
+        Args:
+            trace_id: The trace ID to fetch all runs for
+
+        Returns:
+            List of all runs in the trace (root + children)
+
+        Raises:
+            APIError: If the fetch fails
+        """
+        try:
+            # Fetch all runs for this trace ID (no is_root filter)
+            runs = []
+            for run in self.client.list_runs(trace_id=trace_id):
+                runs.append(run)
+
+            logger.debug(f"Fetched {len(runs)} total runs for trace {trace_id}")
+            return runs
+
+        except Exception as e:
+            raise APIError(f"Failed to fetch trace hierarchy for {trace_id}: {e}") from e
 
     def get_client_info(self) -> Dict[str, Any]:
         """Get client configuration information for debugging.

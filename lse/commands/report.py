@@ -45,14 +45,14 @@ def validate_date(date_str: str) -> datetime:
 def validate_date_range(
     start_date: Optional[str], end_date: Optional[str]
 ) -> tuple[Optional[datetime], Optional[datetime]]:
-    """Validate date range parameters with LangSmith timezone handling.
+    """Validate date range parameters with UTC timezone handling.
 
     Args:
         start_date: Start date string (optional)
         end_date: End date string (optional)
 
     Returns:
-        Tuple of parsed datetime objects in LangSmith timezone
+        Tuple of parsed datetime objects in UTC timezone
 
     Raises:
         ValidationError: If date range is invalid
@@ -73,14 +73,14 @@ def validate_date_range(
     if start_parsed and end_parsed and start_parsed >= end_parsed:
         raise ValidationError("Start date must be before end date.")
 
-    # Convert to LangSmith timezone datetimes for analysis
+    # Convert to UTC timezone datetimes for analysis
     if start_date and end_date:
-        from lse.timezone import LANGSMITH_TIMEZONE
+        from datetime import timezone
 
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=LANGSMITH_TIMEZONE)
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         end_dt = datetime.strptime(end_date, "%Y-%m-%d")
         end_dt = end_dt.replace(
-            hour=23, minute=59, second=59, microsecond=999999, tzinfo=LANGSMITH_TIMEZONE
+            hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
         )
         return start_dt, end_dt
 
@@ -226,12 +226,12 @@ def zenrows_errors_command(
 
         # Parse and validate date parameters
         if date:
-            # Single date mode with timezone handling
+            # Single date mode with UTC timezone handling
             single_dt = validate_date(date)
-            from lse.timezone import LANGSMITH_TIMEZONE
+            from datetime import timezone
 
-            single_dt = single_dt.replace(tzinfo=LANGSMITH_TIMEZONE)
-            logger.info(f"Generating report for single date: {date} (LangSmith timezone)")
+            single_dt = single_dt.replace(tzinfo=timezone.utc)
+            logger.info(f"Generating report for single date: {date} (UTC timezone)")
 
             report_output = generate_zenrows_report(project_name=project, single_date=single_dt)
 

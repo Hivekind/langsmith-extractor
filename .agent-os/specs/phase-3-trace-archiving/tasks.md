@@ -1,6 +1,38 @@
 # Phase 3: Trace Archiving Tasks
 
-## Phase 3.1: Fix Date Storage ⏳
+## 🔴 CRITICAL ISSUES - Must Fix Before Production
+
+### Critical Issue 1: Incomplete Trace Fetching
+**Problem**: Fetching 66 traces when UI shows 158 traces for same UTC date
+
+#### Task A1: Investigate UTC boundary alignment issue
+- [ ] Compare LangSmith UI trace timestamps with API response timestamps
+- [ ] Analyze timezone handling in LangSmith API vs UI
+- [ ] Test different time boundary approaches (strict UTC vs UI-aligned)
+- [ ] Document discrepancy root cause
+
+#### Task A2: Fix trace count discrepancy 
+- [ ] Implement solution to capture all 158 traces visible in UI
+- [ ] Verify fetched trace count matches UI exactly
+- [ ] Test with multiple dates to ensure consistency
+- [ ] Add validation to confirm complete trace capture
+
+### Critical Issue 2: Missing Child Runs
+**Problem**: Only fetching root traces, missing 5,361 total runs
+
+#### Task B1: Remove is_root filter and fetch ALL runs
+- [ ] Modify client.search_runs to remove is_root=True filter
+- [ ] Update archive fetch to capture both root traces and child runs  
+- [ ] Verify total run count matches UI (should get ~5,361 runs)
+- [ ] Test hierarchical relationship preservation
+
+#### Task B2: Implement run relationship storage
+- [ ] Store parent-child relationships in archived data
+- [ ] Update JSON structure to preserve run hierarchy
+- [ ] Add metadata for distinguishing root traces from child runs
+- [ ] Verify complete trace reconstruction capability
+
+## Phase 3.1: Fix Date Storage ✅ COMPLETED
 
 ### Task 1: Update TraceStorage for creation date usage
 - [ ] Modify `_get_storage_path()` to accept trace creation date

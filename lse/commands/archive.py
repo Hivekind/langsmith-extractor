@@ -1,6 +1,7 @@
 """Archive commands for backing up traces to Google Drive."""
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -39,11 +40,22 @@ def archive_fetch(
         "--force",
         help="Skip confirmation if local folder already exists",
     ),
+    include_children: bool = typer.Option(
+        False,
+        "--include-children",
+        help="Fetch all child runs for each trace (complete hierarchy)",
+    ),
+    delay_ms: int = typer.Option(
+        200,
+        "--delay-ms",
+        help="Delay in milliseconds between trace hierarchy requests (default: 200)",
+    ),
 ) -> None:
     """Fetch all traces for a specific date and project.
 
     This command fetches ALL traces (no limit) for the given date
     and stores them in the local filesystem organized by creation date.
+    Use --include-children to fetch complete trace hierarchies with all child runs.
     """
     try:
         from lse.client import LangSmithClient
@@ -83,84 +95,77 @@ def archive_fetch(
         client = LangSmithClient(settings)
         storage = TraceStorage(settings)
 
-        # Use wider date range with buffer to ensure we catch all traces
-        # Some traces may have timestamps slightly outside the exact 24-hour window
-        from datetime import timedelta
-        from lse.timezone import parse_date, to_utc, LANGSMITH_TIMEZONE
+        # Use exact UTC day boundaries for precise trace fetching
+        from lse.timezone import make_date_range_inclusive
 
-        # Parse target date and add buffer
-        target_date = parse_date(date)
+        # Create exact UTC day range (same date for start and end to get that specific day)
+        start_dt, end_dt = make_date_range_inclusive(date, date)
 
-        # Create wide buffer: start 10 hours before target date, end 14 hours after
-        buffer_start = target_date - timedelta(hours=10)
-        buffer_end = target_date + timedelta(days=1, hours=14)
-
-        # Convert to UTC for API
-        start_dt = to_utc(buffer_start.replace(tzinfo=LANGSMITH_TIMEZONE))
-        end_dt = to_utc(buffer_end.replace(tzinfo=LANGSMITH_TIMEZONE))
-
-        console.print(f"[dim]Fetching traces with wide buffer: {start_dt} to {end_dt} (UTC)[/dim]")
-        console.print(f"[dim]Will filter to only save traces created on {date}[/dim]")
+        console.print(f"[dim]Fetching traces for exact UTC day: {start_dt} to {end_dt}[/dim]")
 
         # Fetch traces with progress
-        with ProgressContext("Fetching traces"):
-            # Fetch ALL traces in the wide buffer (no limit)
-            runs = client.search_runs(
+        with ProgressContext("Fetching root traces"):
+            # Fetch ALL root traces for this exact UTC day (no limit)
+            root_runs = client.search_runs(
                 project_name=project,
                 start_time=start_dt.isoformat(),
                 end_time=end_dt.isoformat(),
                 limit=None,  # No limit - fetch everything
             )
 
-        console.print(f"[dim]Debug: Raw API returned {len(runs)} total runs[/dim]")
-
-        if not runs:
-            console.print(f"[yellow]No traces found for {project} on {date}[/yellow]")
+        if not root_runs:
+            console.print(f"[yellow]No traces found for {project} on {date} (UTC)[/yellow]")
             return
 
-        console.print(
-            f"[green]Found {len(runs)} traces. Filtering and saving to local storage...[/green]"
-        )
+        console.print(f"[green]Found {len(root_runs)} root traces for {date} (UTC)[/green]")
 
-        # Filter traces to only include ones created on the requested date
-        from lse.timezone import to_langsmith_timezone
+        # If include_children is True, fetch all child runs for each trace
+        all_runs = []
+        if include_children:
+            console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
+            if delay_ms > 0:
+                estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
+                console.print(
+                    f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
+                )
 
-        requested_date_str = date
+            with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
+                task_id = progress.add_task(f"Processing traces", total=len(root_runs))
 
-        filtered_runs = []
-        for run in runs:
-            # Extract creation date from the run
-            creation_date = storage._extract_creation_date(run)
-            creation_date_langsmith = to_langsmith_timezone(creation_date)
-            creation_date_str = creation_date_langsmith.strftime("%Y-%m-%d")
+                for i, root_run in enumerate(root_runs):
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
+                    )
 
-            # Only keep traces that were actually created on the requested date
-            if creation_date_str == requested_date_str:
-                filtered_runs.append(run)
+                    # Fetch complete hierarchy for this trace
+                    trace_runs = client.fetch_trace_hierarchy(root_run.id)
+                    all_runs.extend(trace_runs)
 
-        if not filtered_runs:
-            console.print(f"[yellow]No traces found that were created on {date}[/yellow]")
+                    # Add configurable delay to avoid rate limits
+                    if delay_ms > 0:
+                        time.sleep(delay_ms / 1000.0)
+
             console.print(
-                f"[dim]Found {len(runs)} traces in date range, but none created on requested date[/dim]"
+                f"[green]Total runs including children: {len(all_runs)} "
+                f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
             )
-            return
+        else:
+            all_runs = root_runs
+            console.print("[dim]Use --include-children to fetch complete trace hierarchies[/dim]")
 
-        discarded_count = len(runs) - len(filtered_runs)
-        if discarded_count > 0:
-            console.print(f"[dim]Filtered out {discarded_count} traces from other dates[/dim]")
-
-        console.print(f"[green]Saving {len(filtered_runs)} traces created on {date}[/green]")
-
-        # Save traces with progress
-        with ProgressContext("Saving traces"):
+        # Save all runs with progress
+        console.print(f"[blue]Saving {len(all_runs)} runs to local storage...[/blue]")
+        with ProgressContext("Saving runs"):
             saved_paths = storage.save_traces(
-                filtered_runs,
+                all_runs,
                 project_name=project,
                 timestamp=None,  # Use current timestamp for filename uniqueness
             )
 
-        console.print(f"[green]✅ Successfully fetched and saved {len(saved_paths)} traces[/green]")
-        console.print(f"[dim]Traces saved to: {target_folder}[/dim]")
+        console.print(f"[green]✅ Successfully fetched and saved {len(saved_paths)} runs[/green]")
+        console.print(f"[dim]Runs saved to: {target_folder}[/dim]")
 
     except Exception as e:
         logger.error(f"Archive fetch failed: {e}")

@@ -26,9 +26,9 @@ class TestSettings:
         """Test that missing API key raises ConfigurationError."""
         with patch.dict(os.environ, {}, clear=True):
             # Also patch dotenv loading to ensure completely clean environment
-            with patch("dotenv.load_dotenv"):
+            with patch("lse.config.load_dotenv"):
                 with pytest.raises(ConfigurationError, match="LANGSMITH_API_KEY is required"):
-                    Settings().validate_required_fields()
+                    Settings(_env_file=None).validate_required_fields()
 
     def test_env_variable_override(self):
         """Test that environment variables override defaults."""

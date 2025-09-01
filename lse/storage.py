@@ -3,7 +3,7 @@
 import json
 import logging
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
@@ -12,7 +12,7 @@ from langsmith.schemas import Run
 
 from lse.config import Settings
 from lse.exceptions import LSEError
-from lse.timezone import to_langsmith_timezone
+from lse.timezone import to_utc
 
 logger = logging.getLogger(__name__)
 
@@ -36,20 +36,20 @@ class TraceStorage:
         self.output_dir = Path(settings.output_dir)
 
     def _extract_creation_date(self, run: Run) -> datetime:
-        """Extract creation date from a trace run.
+        """Extract creation date from a trace run and convert to UTC.
 
         Args:
             run: LangSmith run object
 
         Returns:
-            Creation date of the trace
+            Creation date of the trace in UTC timezone
         """
         # Get the start_time from the run
         start_time = getattr(run, "start_time", None)
 
         if start_time is None:
             logger.warning(f"No start_time found for run {run.id}, using current time")
-            return datetime.now()
+            return datetime.now(tz=timezone.utc)
 
         # Handle different start_time formats
         if isinstance(start_time, str):
@@ -63,18 +63,15 @@ class TraceStorage:
                     dt = datetime.strptime(start_time, "%Y-%m-%d %H:%M:%S")
                 except ValueError:
                     logger.warning(f"Could not parse start_time '{start_time}' for run {run.id}")
-                    return datetime.now()
+                    return datetime.now(tz=timezone.utc)
         elif isinstance(start_time, datetime):
             dt = start_time
         else:
             logger.warning(f"Unexpected start_time type {type(start_time)} for run {run.id}")
-            return datetime.now()
+            return datetime.now(tz=timezone.utc)
 
-        # Convert to LangSmith timezone if naive
-        if dt.tzinfo is None:
-            dt = to_langsmith_timezone(dt)
-
-        return dt
+        # Convert to UTC (assuming naive datetime is already in UTC)
+        return to_utc(dt)
 
     def _ensure_directory(self, path: Path) -> None:
         """Ensure directory exists, creating if necessary.
@@ -263,8 +260,9 @@ class TraceStorage:
                 # Use slight timestamp offset for each file to avoid conflicts
                 file_timestamp = timestamp or datetime.now()
                 if i > 0:
-                    # Add microseconds to ensure unique timestamps
-                    file_timestamp = file_timestamp.replace(microsecond=i * 1000)
+                    # Add microseconds to ensure unique timestamps, but cap at 999999
+                    microsecond_offset = min(i * 1000, 999999)
+                    file_timestamp = file_timestamp.replace(microsecond=microsecond_offset)
 
                 path = self.save_trace(run, project_name, file_timestamp)
                 saved_paths.append(path)

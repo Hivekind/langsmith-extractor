@@ -230,16 +230,31 @@ GOOGLE_DRIVE_CREDENTIALS_PATH=./credentials.json  # for service account
 - Test network interruption handling
 - Test progress indicators
 
+## Critical Issues Identified
+
+### Issue 1: Incomplete Trace Fetching
+**Problem**: UTC day boundary fetching returns 66 traces, but LangSmith UI shows 158 traces for the same UTC date (2025-08-26).
+**Impact**: Archive is missing 58% of traces (92 traces not captured)
+**Root Cause**: UTC day boundaries may not align with LangSmith's internal trace timestamping
+**Status**: 🔴 Critical - Must be fixed before production use
+
+### Issue 2: Missing Child Runs  
+**Problem**: Current fetch only captures root traces, missing all child/sub-runs
+**Impact**: LangSmith UI shows 5,361 total runs for the period, but we only capture ~158 root traces
+**Root Cause**: `is_root=True` filter in client excludes child runs from fetch results
+**Status**: 🔴 Critical - Archive is fundamentally incomplete without child runs
+
 ## Success Criteria
 
 1. ✅ Traces are stored by UTC creation date, not fetch date
-2. ✅ Can fetch all traces for a specific date
-3. ✅ Can create zip files with proper naming
-4. ✅ Can upload to Google Drive with folder organization
-5. ✅ Can restore archived data from Google Drive
-6. ✅ Proper confirmation prompts prevent data loss
-7. ✅ Progress indicators show operation status
-8. ✅ All operations handle errors gracefully
+2. 🔴 **BROKEN**: Can fetch all traces for a specific date (missing 58% of traces)
+3. 🔴 **BROKEN**: Can fetch all child runs for complete trace data
+4. ✅ Can create zip files with proper naming
+5. ✅ Can upload to Google Drive with folder organization  
+6. ✅ Can restore archived data from Google Drive
+7. ✅ Proper confirmation prompts prevent data loss
+8. ✅ Progress indicators show operation status
+9. ✅ All operations handle errors gracefully
 
 ## Future Enhancements
 
