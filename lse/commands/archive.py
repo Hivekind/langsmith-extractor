@@ -130,7 +130,7 @@ def archive_fetch(
                 )
 
             with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
-                task_id = progress.add_task(f"Processing traces", total=len(root_runs))
+                task_id = progress.add_task("Processing traces", total=len(root_runs))
 
                 for i, root_run in enumerate(root_runs):
                     progress.update(
