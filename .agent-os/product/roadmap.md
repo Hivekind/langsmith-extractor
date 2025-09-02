@@ -210,6 +210,49 @@ The current `extract_zenrows_errors` function only searches for errors in `child
 - `lse/analysis.py`: Updated `extract_zenrows_errors()` function
 - `tests/test_analysis.py`: Added comprehensive test coverage
 
+## Phase 4.5: Remove Redundant Fetch Command 🔄 PLANNED
+
+**Goal:** Remove the standalone `lse fetch` command to eliminate redundancy and simplify the CLI interface
+**Success Criteria:** Only `lse archive` commands remain, with all previous `lse fetch` functionality accessible through archive commands
+
+### Problem Statement
+The standalone `lse fetch` command creates redundancy and confusion:
+1. `lse fetch` - General purpose fetching with limits and flexible filtering
+2. `lse archive fetch` - Complete data archiving for specific dates
+
+Users have two ways to fetch data, leading to confusion about which command to use. The `lse archive fetch` command already provides comprehensive fetching capabilities for archiving workflows.
+
+### Features
+
+- [ ] **Remove lse fetch command** - Delete the standalone fetch command entirely `S`
+- [ ] **Update CLI interface** - Remove fetch command from main CLI app `S`
+- [ ] **Update documentation** - Remove all references to `lse fetch` command `S`
+- [ ] **Update tests** - Remove all fetch command tests `S`
+- [ ] **Preserve archive commands** - Ensure all `lse archive` commands remain completely untouched `S`
+
+### Design Goals
+1. **Simplified interface**: Only archive-based commands for data fetching
+2. **No functionality loss**: All necessary fetching capabilities remain via `lse archive fetch`
+3. **Clean removal**: Complete elimination of redundant code paths
+4. **Clear documentation**: Single command set with no confusion
+
+### Implementation Approach
+1. **Audit fetch usage**: Identify all `lse fetch` implementations and references
+2. **Remove fetch command**: Delete fetch command from CLI interface
+3. **Clean up imports**: Remove unused fetch-related imports and functions  
+4. **Update documentation**: Remove fetch command examples and help text
+5. **Remove tests**: Delete all standalone fetch command tests
+6. **Preserve archive**: Ensure zero changes to any `lse archive` functionality
+
+### Scope Limitations
+- **NO changes to archive commands**: All `lse archive fetch`, `lse archive zip`, `lse archive upload`, etc. remain exactly as-is
+- **NO functionality migration**: Archive commands already provide necessary capabilities
+- **NO renaming**: Archive command structure stays unchanged
+
+### Dependencies
+- Analysis of current `lse fetch` implementation to ensure clean removal
+- Verification that no archive functionality depends on standalone fetch code
+
 ## Phase 5: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
