@@ -28,9 +28,9 @@
 
 ### Production Ready Features
 
-✅ **Fetch by Project**: `lse fetch --project my-project --limit 10`  
-✅ **Fetch by Trace ID**: `lse fetch --trace-id abc123`  
-✅ **Date Range Filtering**: `lse fetch --start-date 2025-08-29 --end-date 2025-08-30`  
+✅ **Archive Fetch by Project**: `lse archive fetch --project my-project --date 2025-08-29`  
+✅ **Archive Complete Datasets**: `lse archive fetch --project my-project --date 2025-08-29 --include-children`  
+✅ **Archive with Google Drive**: `lse archive --project my-project --date 2025-08-29`  
 ✅ **Organized Storage**: `data/{project-name}/{YYYY-MM-DD}/{trace-id}_{timestamp}.json`  
 ✅ **Progress Indication**: Real-time progress bars during fetch and save operations  
 ✅ **Robust Error Handling**: Automatic retry with exponential backoff for transient failures
@@ -210,7 +210,7 @@ The current `extract_zenrows_errors` function only searches for errors in `child
 - `lse/analysis.py`: Updated `extract_zenrows_errors()` function
 - `tests/test_analysis.py`: Added comprehensive test coverage
 
-## Phase 4.5: Remove Redundant Fetch Command 🔄 PLANNED
+## Phase 4.5: Remove Redundant Fetch Command ✅ COMPLETED
 
 **Goal:** Remove the standalone `lse fetch` command to eliminate redundancy and simplify the CLI interface
 **Success Criteria:** Only `lse archive` commands remain, with all previous `lse fetch` functionality accessible through archive commands
@@ -224,34 +224,45 @@ Users have two ways to fetch data, leading to confusion about which command to u
 
 ### Features
 
-- [ ] **Remove lse fetch command** - Delete the standalone fetch command entirely `S`
-- [ ] **Update CLI interface** - Remove fetch command from main CLI app `S`
-- [ ] **Update documentation** - Remove all references to `lse fetch` command `S`
-- [ ] **Update tests** - Remove all fetch command tests `S`
-- [ ] **Preserve archive commands** - Ensure all `lse archive` commands remain completely untouched `S`
+- [x] **Remove lse fetch command** - Delete the standalone fetch command entirely `S` ✅
+- [x] **Update CLI interface** - Remove fetch command from main CLI app `S` ✅
+- [x] **Update documentation** - Remove all references to `lse fetch` command `S` ✅
+- [x] **Update tests** - Remove all fetch command tests `S` ✅
+- [x] **Preserve archive commands** - Ensure all `lse archive` commands remain completely untouched `S` ✅
 
-### Design Goals
-1. **Simplified interface**: Only archive-based commands for data fetching
-2. **No functionality loss**: All necessary fetching capabilities remain via `lse archive fetch`
-3. **Clean removal**: Complete elimination of redundant code paths
-4. **Clear documentation**: Single command set with no confusion
+### Completed Implementation
 
-### Implementation Approach
-1. **Audit fetch usage**: Identify all `lse fetch` implementations and references
-2. **Remove fetch command**: Delete fetch command from CLI interface
-3. **Clean up imports**: Remove unused fetch-related imports and functions  
-4. **Update documentation**: Remove fetch command examples and help text
-5. **Remove tests**: Delete all standalone fetch command tests
-6. **Preserve archive**: Ensure zero changes to any `lse archive` functionality
+**Status**: Phase 4.5 is now complete! ✅
 
-### Scope Limitations
-- **NO changes to archive commands**: All `lse archive fetch`, `lse archive zip`, `lse archive upload`, etc. remain exactly as-is
-- **NO functionality migration**: Archive commands already provide necessary capabilities
-- **NO renaming**: Archive command structure stays unchanged
+#### What Was Accomplished
+- **Removed Files**: Deleted `lse/commands/fetch.py` (258 lines) and `tests/test_fetch_command.py` (227 lines)
+- **Updated CLI**: Removed fetch command registration from `lse/cli.py`
+- **Documentation Updated**: Updated `CLAUDE.md` and `README.md` to use archive commands exclusively
+- **Error Messages Fixed**: Updated suggestions in `lse/archive.py` and `lse/commands/archive.py`
+- **Tests Fixed**: Updated one test that expected the removed fetch command
 
-### Dependencies
-- Analysis of current `lse fetch` implementation to ensure clean removal
-- Verification that no archive functionality depends on standalone fetch code
+#### Results Achieved
+- **Simplified CLI Interface**: Only `lse report` and `lse archive` commands remain
+- **No Functionality Lost**: All fetch capabilities preserved via `lse archive fetch`
+- **Clean Codebase**: Eliminated 506 lines of redundant code
+- **Zero Regressions**: All 117 tests pass, no existing functionality broken
+- **Clear User Experience**: Single path for data fetching eliminates confusion
+
+#### Files Modified
+- `lse/cli.py`: Removed fetch command import and registration
+- `lse/commands/fetch.py`: Deleted (258 lines removed)
+- `tests/test_fetch_command.py`: Deleted (227 lines removed)
+- `CLAUDE.md`: Updated examples to use `lse archive fetch`
+- `README.md`: Removed fetch command documentation
+- `lse/archive.py`: Updated error message
+- `lse/commands/archive.py`: Updated suggestion message
+- `tests/test_report_command.py`: Fixed test expecting removed command
+
+#### Architecture Impact
+The CLI now has a clean, focused architecture:
+- **Data Fetching**: Only via `lse archive fetch` (comprehensive, date-based)
+- **Reporting**: Via `lse report` (analysis of stored data)
+- **Archiving**: Via `lse archive zip/upload/restore` (Google Drive integration)
 
 ## Phase 5: Advanced Reporting & Automation
 
