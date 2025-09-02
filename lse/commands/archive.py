@@ -208,7 +208,7 @@ def archive_zip(
         if not stats["exists"]:
             console.print(f"[red]❌ No traces found for {project} on {date}[/red]")
             console.print(
-                f"[yellow]Run 'lse fetch --project {project} --start-date {date} --end-date {date}' first[/yellow]"
+                f"[yellow]Run 'lse archive fetch --project {project} --date {date}' first[/yellow]"
             )
             raise typer.Exit(1)
 

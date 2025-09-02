@@ -89,15 +89,14 @@ uv run ruff format .
 Here's how to run through a complete trace archival sequence:
 
 ```bash
-# 1. Fetch traces from LangSmith for a specific date
-uv run lse fetch --project my-project --date 2024-01-15
-
-# 2. Generate a report from fetched data
-uv run lse report zenrows-errors --project my-project --date 2024-01-15
-
-# 3. Archive workflow (fetch, compress, and upload to Google Drive)
+# 1. Archive workflow (fetch, compress, and upload to Google Drive)
 # First, fetch all traces including child runs
 uv run lse archive fetch --project my-project --date 2024-01-15 --include-children
+
+# 2. Generate a report from archived data
+uv run lse report zenrows-errors --project my-project --date 2024-01-15
+
+# 3. Continue with archiving
 
 # Create a zip archive
 uv run lse archive zip --project my-project --date 2024-01-15
@@ -115,9 +114,6 @@ uv run lse archive restore --project my-project --start-date 2024-01-01 --end-da
 ## Command Reference
 
 ### Core Commands
-
-- `lse fetch` - Fetch traces from LangSmith API
-  - Options: `--project`, `--date`, `--start-date`, `--end-date`, `--limit`
 
 - `lse report` - Generate analysis reports from stored traces
   - Subcommands: `zenrows-errors` (analyze zenrows scraper failures)

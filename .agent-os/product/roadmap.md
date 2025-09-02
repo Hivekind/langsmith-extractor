@@ -28,9 +28,9 @@
 
 ### Production Ready Features
 
-✅ **Fetch by Project**: `lse fetch --project my-project --limit 10`  
-✅ **Fetch by Trace ID**: `lse fetch --trace-id abc123`  
-✅ **Date Range Filtering**: `lse fetch --start-date 2025-08-29 --end-date 2025-08-30`  
+✅ **Archive Fetch by Project**: `lse archive fetch --project my-project --date 2025-08-29`  
+✅ **Archive Complete Datasets**: `lse archive fetch --project my-project --date 2025-08-29 --include-children`  
+✅ **Archive with Google Drive**: `lse archive --project my-project --date 2025-08-29`  
 ✅ **Organized Storage**: `data/{project-name}/{YYYY-MM-DD}/{trace-id}_{timestamp}.json`  
 ✅ **Progress Indication**: Real-time progress bars during fetch and save operations  
 ✅ **Robust Error Handling**: Automatic retry with exponential backoff for transient failures
@@ -209,6 +209,60 @@ The current `extract_zenrows_errors` function only searches for errors in `child
 #### Files Modified
 - `lse/analysis.py`: Updated `extract_zenrows_errors()` function
 - `tests/test_analysis.py`: Added comprehensive test coverage
+
+## Phase 4.5: Remove Redundant Fetch Command ✅ COMPLETED
+
+**Goal:** Remove the standalone `lse fetch` command to eliminate redundancy and simplify the CLI interface
+**Success Criteria:** Only `lse archive` commands remain, with all previous `lse fetch` functionality accessible through archive commands
+
+### Problem Statement
+The standalone `lse fetch` command creates redundancy and confusion:
+1. `lse fetch` - General purpose fetching with limits and flexible filtering
+2. `lse archive fetch` - Complete data archiving for specific dates
+
+Users have two ways to fetch data, leading to confusion about which command to use. The `lse archive fetch` command already provides comprehensive fetching capabilities for archiving workflows.
+
+### Features
+
+- [x] **Remove lse fetch command** - Delete the standalone fetch command entirely `S` ✅
+- [x] **Update CLI interface** - Remove fetch command from main CLI app `S` ✅
+- [x] **Update documentation** - Remove all references to `lse fetch` command `S` ✅
+- [x] **Update tests** - Remove all fetch command tests `S` ✅
+- [x] **Preserve archive commands** - Ensure all `lse archive` commands remain completely untouched `S` ✅
+
+### Completed Implementation
+
+**Status**: Phase 4.5 is now complete! ✅
+
+#### What Was Accomplished
+- **Removed Files**: Deleted `lse/commands/fetch.py` (258 lines) and `tests/test_fetch_command.py` (227 lines)
+- **Updated CLI**: Removed fetch command registration from `lse/cli.py`
+- **Documentation Updated**: Updated `CLAUDE.md` and `README.md` to use archive commands exclusively
+- **Error Messages Fixed**: Updated suggestions in `lse/archive.py` and `lse/commands/archive.py`
+- **Tests Fixed**: Updated one test that expected the removed fetch command
+
+#### Results Achieved
+- **Simplified CLI Interface**: Only `lse report` and `lse archive` commands remain
+- **No Functionality Lost**: All fetch capabilities preserved via `lse archive fetch`
+- **Clean Codebase**: Eliminated 506 lines of redundant code
+- **Zero Regressions**: All 117 tests pass, no existing functionality broken
+- **Clear User Experience**: Single path for data fetching eliminates confusion
+
+#### Files Modified
+- `lse/cli.py`: Removed fetch command import and registration
+- `lse/commands/fetch.py`: Deleted (258 lines removed)
+- `tests/test_fetch_command.py`: Deleted (227 lines removed)
+- `CLAUDE.md`: Updated examples to use `lse archive fetch`
+- `README.md`: Removed fetch command documentation
+- `lse/archive.py`: Updated error message
+- `lse/commands/archive.py`: Updated suggestion message
+- `tests/test_report_command.py`: Fixed test expecting removed command
+
+#### Architecture Impact
+The CLI now has a clean, focused architecture:
+- **Data Fetching**: Only via `lse archive fetch` (comprehensive, date-based)
+- **Reporting**: Via `lse report` (analysis of stored data)
+- **Archiving**: Via `lse archive zip/upload/restore` (Google Drive integration)
 
 ## Phase 5: Advanced Reporting & Automation
 

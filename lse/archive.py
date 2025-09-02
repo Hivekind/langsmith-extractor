@@ -67,7 +67,7 @@ class ArchiveManager:
         if not json_files:
             raise ArchiveError(
                 f"No trace files found in {folder_path}. "
-                "Run 'lse fetch' first to fetch traces for this date."
+                "Run 'lse archive fetch' first to fetch traces for this date."
             )
 
     def create_zip_filename(self, project_name: str, date: str) -> str:
