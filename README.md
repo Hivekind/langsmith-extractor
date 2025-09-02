@@ -108,7 +108,7 @@ uv run lse archive upload --project my-project --date 2024-01-15
 uv run lse archive --project my-project --date 2024-01-15 --include-children
 
 # 4. Restore archived data from Google Drive
-uv run lse archive restore --project my-project --start-date 2024-01-01 --end-date 2024-01-31
+uv run lse archive restore --project my-project --date 2024-01-15
 ```
 
 ## Command Reference

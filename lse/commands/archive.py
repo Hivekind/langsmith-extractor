@@ -321,20 +321,15 @@ def archive_upload(
 
 @archive_app.command("restore")
 def archive_restore(
+    date: str = typer.Option(
+        ...,
+        "--date",
+        help="Date to restore traces for (YYYY-MM-DD format)",
+    ),
     project: str = typer.Option(
         ...,
         "--project",
         help="Project name to restore traces for",
-    ),
-    start_date: Optional[str] = typer.Option(
-        None,
-        "--start-date",
-        help="Start date for restore range (YYYY-MM-DD format). Default: restore all",
-    ),
-    end_date: Optional[str] = typer.Option(
-        None,
-        "--end-date",
-        help="End date for restore range (YYYY-MM-DD format). Default: restore all",
     ),
     force: bool = typer.Option(
         False,
@@ -345,42 +340,20 @@ def archive_restore(
     """Restore archived traces from Google Drive.
 
     Downloads and extracts archived trace files from Google Drive
-    back to the local filesystem. Can restore specific date ranges
-    or all available archives for a project.
+    back to the local filesystem for a specific date.
     """
     try:
         from lse.drive import GoogleDriveClient
         from datetime import datetime
 
-        if start_date and end_date:
-            console.print(
-                f"[blue]🔄 Restoring {project} traces from {start_date} to {end_date}[/blue]"
-            )
-        elif start_date:
-            console.print(f"[blue]🔄 Restoring {project} traces from {start_date} onwards[/blue]")
-        else:
-            console.print(
-                f"[blue]🔄 Restoring all available {project} traces from Google Drive[/blue]"
-            )
+        console.print(f"[blue]🔄 Restoring {project} traces for {date}[/blue]")
 
-        # Validate date formats
-        if start_date:
-            try:
-                datetime.strptime(start_date, "%Y-%m-%d")
-            except ValueError:
-                console.print(
-                    f"[red]❌ Invalid start date format '{start_date}'. Expected YYYY-MM-DD[/red]"
-                )
-                raise typer.Exit(1)
-
-        if end_date:
-            try:
-                datetime.strptime(end_date, "%Y-%m-%d")
-            except ValueError:
-                console.print(
-                    f"[red]❌ Invalid end date format '{end_date}'. Expected YYYY-MM-DD[/red]"
-                )
-                raise typer.Exit(1)
+        # Validate date format
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]❌ Invalid date format '{date}'. Expected YYYY-MM-DD[/red]")
+            raise typer.Exit(1)
 
         # Initialize components
         settings = get_settings()
@@ -416,7 +389,7 @@ def archive_restore(
 
         console.print(f"[green]Found {len(archives)} archives on Google Drive[/green]")
 
-        # Filter archives by date range if specified
+        # Filter archives by date
         filtered_archives = []
         for archive in archives:
             # Extract date from filename: project_YYYY-MM-DD.zip
@@ -424,41 +397,37 @@ def archive_restore(
             if len(parts) >= 2:
                 archive_date = parts[-1]  # Last part should be the date
 
-                # Apply date filters
-                if start_date and archive_date < start_date:
-                    continue
-                if end_date and archive_date > end_date:
-                    continue
-
-                filtered_archives.append({"archive": archive, "date": archive_date})
+                # Check if this archive matches the requested date
+                if archive_date == date:
+                    filtered_archives.append({"archive": archive, "date": archive_date})
+                    break  # Only need one archive for the specific date
 
         if not filtered_archives:
-            date_range_str = ""
-            if start_date and end_date:
-                date_range_str = f" in range {start_date} to {end_date}"
-            elif start_date:
-                date_range_str = f" from {start_date} onwards"
-
-            console.print(f"[yellow]No archives found{date_range_str}[/yellow]")
+            console.print(f"[yellow]No archive found for {project} on {date}[/yellow]")
+            console.print("[dim]Available archives on Google Drive:[/dim]")
+            for archive in archives[:5]:  # Show first 5 available
+                console.print(f"  [dim]• {archive['name']}[/dim]")
+            if len(archives) > 5:
+                console.print(f"  [dim]... and {len(archives) - 5} more[/dim]")
             return
 
-        console.print(f"[blue]Will restore {len(filtered_archives)} archives:[/blue]")
+        console.print(f"[blue]Will restore archive for {date}:[/blue]")
         for item in filtered_archives:
             size_mb = item["archive"]["size"] / (1024 * 1024)
             console.print(f"  [dim]• {item['archive']['name']} ({size_mb:.1f} MB)[/dim]")
 
         # Confirm restore operation
         if not force:
-            confirm = typer.confirm(f"Continue with restoring {len(filtered_archives)} archives?")
+            confirm = typer.confirm(f"Continue with restoring archive for {date}?")
             if not confirm:
                 console.print("Restore cancelled")
                 return
 
-        # Restore each archive
+        # Restore the archive
         restored_count = 0
         for item in filtered_archives:
             archive = item["archive"]
-            date = item["date"]
+            archive_date = item["date"]
 
             console.print(f"[blue]Restoring {archive['name']}...[/blue]")
 
@@ -478,7 +447,7 @@ def archive_restore(
                     task = progress.add_task(f"[green]Extracting {archive['name']}...", total=1)
 
                     extracted_path = archive_manager.extract_zip_archive(
-                        temp_path, project, date, force
+                        temp_path, project, archive_date, force
                     )
 
                     progress.update(task, completed=1)
@@ -496,7 +465,7 @@ def archive_restore(
                     temp_path.unlink(missing_ok=True)
 
         if restored_count > 0:
-            console.print(f"[green]✅ Successfully restored {restored_count} archives[/green]")
+            console.print(f"[green]✅ Successfully restored archive for {date}[/green]")
         else:
             console.print("[red]❌ No archives were successfully restored[/red]")
             raise typer.Exit(1)
