@@ -9,7 +9,6 @@ import typer
 from lse import __app_name__, __version__
 from lse.config import get_settings
 from lse.exceptions import ConfigurationError, LSEError
-from lse.commands.fetch import fetch_command
 from lse.commands.report import report_app
 from lse.commands.archive import archive_app
 
@@ -131,7 +130,6 @@ def handle_exceptions(func):
 
 # Register commands
 
-app.command("fetch")(handle_exceptions(fetch_command))
 app.add_typer(report_app, name="report")
 app.add_typer(archive_app, name="archive")
 

@@ -185,13 +185,10 @@ After ANY Python code changes, you MUST:
 ## CLI Usage Examples
 
 ```bash
-# Fetch traces from a project
-uv run lse fetch --project my-project --limit 100
+# Archive traces from a project
+uv run lse archive fetch --project my-project --date 2024-01-01
 
-# Fetch with date range
-uv run lse fetch --project my-project --start-date 2024-01-01 --end-date 2024-01-31
-
-# Generate report from fetched data
+# Generate report from archived data
 uv run lse report --format table
 
 # Export to Google Sheets

@@ -174,10 +174,10 @@ class TestReportCommandIntegration:
 
     def test_maintains_existing_commands(self):
         """Test that existing commands still work after adding report."""
-        result = self.runner.invoke(app, ["fetch", "--help"])
+        result = self.runner.invoke(app, ["archive", "--help"])
 
         assert result.exit_code == 0
-        assert "fetch" in result.stdout.lower()
+        assert "archive" in result.stdout.lower()
 
     def test_follows_cli_error_handling_patterns(self):
         """Test that report command follows existing error handling patterns."""
