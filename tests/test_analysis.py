@@ -239,6 +239,81 @@ class TestZenrowsErrorDetection:
 
         assert len(errors) == 0
 
+    def test_detect_root_level_zenrows_error(self):
+        """Test detection of zenrows_scraper error at root trace level."""
+        trace_data = {
+            "id": "root-trace",
+            "name": "zenrows_scraper",
+            "status": "error",
+            "error": "HTTPError('422 Unprocessable Entity')",
+            "start_time": "2025-08-20 03:29:35.040455",
+            "end_time": "2025-08-20 03:29:39.371309",
+            "child_runs": None,
+        }
+
+        errors = extract_zenrows_errors(trace_data)
+
+        assert len(errors) == 1
+        assert errors[0]["id"] == "root-trace"
+        assert errors[0]["name"] == "zenrows_scraper"
+        assert errors[0]["status"] == "error"
+        assert "422" in errors[0]["error"]
+
+    def test_detect_root_and_child_zenrows_errors(self):
+        """Test detection of zenrows errors at both root and child levels."""
+        trace_data = {
+            "id": "root-trace",
+            "name": "zenrows_scraper",
+            "status": "error",
+            "error": "Root level error",
+            "child_runs": [
+                {
+                    "id": "child-1",
+                    "name": "zenrows_scraper",
+                    "status": "error",
+                    "error": "Child level error",
+                }
+            ],
+        }
+
+        errors = extract_zenrows_errors(trace_data)
+
+        assert len(errors) == 2
+        # Root error should be first
+        assert errors[0]["id"] == "root-trace"
+        assert errors[0]["error"] == "Root level error"
+        # Child error should be second
+        assert errors[1]["id"] == "child-1"
+        assert errors[1]["error"] == "Child level error"
+
+    def test_root_level_success_not_counted(self):
+        """Test that successful root-level zenrows_scraper is not counted as error."""
+        trace_data = {
+            "id": "root-trace",
+            "name": "zenrows_scraper",
+            "status": "success",
+            "child_runs": None,
+        }
+
+        errors = extract_zenrows_errors(trace_data)
+
+        assert len(errors) == 0
+
+    def test_root_level_case_insensitive(self):
+        """Test case-insensitive detection at root level."""
+        trace_data = {
+            "id": "root-trace",
+            "name": "ZENROWS_SCRAPER",  # Uppercase
+            "status": "ERROR",  # Uppercase
+            "error": "Some error",
+            "child_runs": None,
+        }
+
+        errors = extract_zenrows_errors(trace_data)
+
+        assert len(errors) == 1
+        assert errors[0]["name"] == "ZENROWS_SCRAPER"
+
 
 class TestDateGrouping:
     """Test date-based grouping of trace data."""
@@ -565,3 +640,76 @@ class TestIntegrationScenarios:
             assert result["2025-08-29"]["total_traces"] == 2
             assert result["2025-08-29"]["zenrows_errors"] == 1
             assert result["2025-08-29"]["error_rate"] == 50.0
+
+    def test_root_vs_child_trace_counting(self):
+        """Test that error rate uses root trace count, not total trace count."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            # Create 2 root traces and 3 child traces (5 total)
+            traces = [
+                {
+                    "metadata": {"trace_id": "root1"},
+                    "trace": {
+                        "id": "root1",
+                        "name": "root_trace_1",
+                        "start_time": "2025-08-29 10:00:00",
+                        # No parent_run_id = root trace
+                    },
+                },
+                {
+                    "metadata": {"trace_id": "root2"},
+                    "trace": {
+                        "id": "root2",
+                        "name": "root_trace_2",
+                        "start_time": "2025-08-29 11:00:00",
+                        # No parent_run_id = root trace
+                    },
+                },
+                {
+                    "metadata": {"trace_id": "child1"},
+                    "trace": {
+                        "id": "child1",
+                        "name": "zenrows_scraper",
+                        "status": "error",
+                        "start_time": "2025-08-29 10:05:00",
+                        "parent_run_id": "root1",  # Child of root1
+                    },
+                },
+                {
+                    "metadata": {"trace_id": "child2"},
+                    "trace": {
+                        "id": "child2",
+                        "name": "zenrows_scraper",
+                        "status": "error",
+                        "start_time": "2025-08-29 11:05:00",
+                        "parent_run_id": "root2",  # Child of root2
+                    },
+                },
+                {
+                    "metadata": {"trace_id": "child3"},
+                    "trace": {
+                        "id": "child3",
+                        "name": "other_operation",
+                        "status": "success",
+                        "start_time": "2025-08-29 12:00:00",
+                        "parent_run_id": "root2",  # Child of root2
+                    },
+                },
+            ]
+
+            for i, trace_data in enumerate(traces):
+                with open(date_dir / f"trace{i}.json", "w") as f:
+                    json.dump(trace_data, f)
+
+            analyzer = TraceAnalyzer()
+            result = analyzer.analyze_zenrows_errors(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            # Should count only 2 root traces for total, but find 2 errors across all traces
+            assert result["2025-08-29"]["total_traces"] == 2  # Only root traces
+            assert result["2025-08-29"]["zenrows_errors"] == 2  # Errors from child traces
+            assert result["2025-08-29"]["error_rate"] == 100.0  # 2/2 = 100%

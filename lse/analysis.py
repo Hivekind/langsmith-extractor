@@ -107,7 +107,8 @@ def parse_trace_file(file_path: Path) -> Optional[Dict[str, Any]]:
 def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Extract zenrows_scraper errors from trace data.
 
-    Recursively searches through child runs to find sub-traces with name
+    Checks the root trace first for zenrows_scraper errors, then recursively
+    searches through child runs (if they exist) to find sub-traces with name
     matching 'zenrows_scraper' and status indicating error.
 
     Args:
@@ -117,6 +118,21 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         List of error records containing details about zenrows failures
     """
     errors = []
+
+    # First check if the root trace itself is a zenrows_scraper with error
+    root_name = trace_data.get("name", "").lower()
+    root_status = trace_data.get("status", "").lower()
+
+    if "zenrows_scraper" in root_name and root_status == "error":
+        error_record = {
+            "id": trace_data.get("id"),
+            "name": trace_data.get("name"),
+            "status": trace_data.get("status"),
+            "error": trace_data.get("error", "Unknown error"),
+            "start_time": trace_data.get("start_time"),
+            "end_time": trace_data.get("end_time"),
+        }
+        errors.append(error_record)
 
     def search_child_runs(runs: List[Dict[str, Any]]) -> None:
         """Recursively search child runs for zenrows errors."""
@@ -147,9 +163,9 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
             if nested_runs:
                 search_child_runs(nested_runs)
 
-    # Start search from top-level child runs
+    # Then search child runs if they exist and are not None
     child_runs = trace_data.get("child_runs")
-    if child_runs:
+    if child_runs is not None and child_runs:
         search_child_runs(child_runs)
 
     return errors
@@ -295,15 +311,20 @@ class TraceAnalyzer:
         # Analyze each day
         daily_data = {}
         for date_key, date_traces in grouped_traces.items():
-            total_traces = len(date_traces)
+            # Count only root traces (traces without parent_run_id) for the total
+            root_traces = [t for t in date_traces if t.get("parent_run_id") is None]
+            total_root_traces = len(root_traces)
             total_errors = 0
 
-            # Count zenrows errors for this date
+            # Count zenrows errors across ALL traces (both root and child)
             for trace in date_traces:
                 errors = extract_zenrows_errors(trace)
                 total_errors += len(errors)
 
-            daily_data[date_key] = {"total_traces": total_traces, "zenrows_errors": total_errors}
+            daily_data[date_key] = {
+                "total_traces": total_root_traces,
+                "zenrows_errors": total_errors,
+            }
 
         # Calculate error rates
         result = calculate_error_rates(daily_data)
