@@ -264,6 +264,60 @@ The CLI now has a clean, focused architecture:
 - **Reporting**: Via `lse report` (analysis of stored data)
 - **Archiving**: Via `lse archive zip/upload/restore` (Google Drive integration)
 
+## Phase 4.6: Fix Archive Command Interface Inconsistency 🔄 PLANNED
+
+**Goal:** Add --date parameter to restore command for interface consistency
+**Success Criteria:** All archive commands support --date for single date operations
+
+### Problem Statement
+The archive commands have inconsistent parameter interfaces:
+
+**Consistent Commands** (support `--date` for single date):
+- `lse archive fetch --date 2025-08-20 --project my-project`
+- `lse archive zip --date 2025-08-20 --project my-project` 
+- `lse archive upload --date 2025-08-20 --project my-project`
+
+**Inconsistent Command** (only supports date ranges):
+- `lse archive restore --start-date 2025-08-20 --end-date 2025-08-20 --project my-project`
+
+This forces users to remember different parameter patterns and makes single-date restore operations unnecessarily verbose.
+
+### Features
+
+- [ ] **Add --date parameter to restore** - Support single date restoration like other archive commands `S`
+- [ ] **Remove date range support from restore** - Eliminate --start-date/--end-date parameters `S`
+- [ ] **Consistent help text** - Match parameter descriptions with other archive commands `S`
+- [ ] **Update documentation** - Show consistent --date interface across all commands `S`
+
+### Design Goals
+1. **Single date operations only**: All commands support only `--date YYYY-MM-DD`
+2. **Interface consistency**: Same parameter pattern across all archive commands
+3. **Simplified restore**: Remove complex date range functionality
+4. **Clean migration**: Clear path from old to new interface
+
+### Implementation Approach
+1. **Add --date to restore**: Match other archive commands exactly
+2. **Remove range parameters**: Delete --start-date and --end-date support
+3. **Update validation**: Simple date validation like other commands
+4. **Breaking change**: Existing range usage will need to migrate
+
+### Example Usage After Fix
+```bash
+# Consistent single date operations across all commands
+lse archive fetch --date 2025-08-20 --project my-project
+lse archive zip --date 2025-08-20 --project my-project
+lse archive upload --date 2025-08-20 --project my-project
+lse archive restore --date 2025-08-20 --project my-project  # NEW
+
+# Date ranges no longer supported
+lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-project  # REMOVED
+```
+
+### Dependencies
+- Understanding of restore command implementation
+- Migration plan for existing range usage
+- No Google Drive API changes required
+
 ## Phase 5: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
