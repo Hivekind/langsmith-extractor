@@ -42,64 +42,15 @@ def validate_date(date_str: str) -> datetime:
         raise ValidationError(f"Invalid date format '{date_str}'. Expected YYYY-MM-DD.")
 
 
-def validate_date_range(
-    start_date: Optional[str], end_date: Optional[str]
-) -> tuple[Optional[datetime], Optional[datetime]]:
-    """Validate date range parameters with UTC timezone handling.
-
-    Args:
-        start_date: Start date string (optional)
-        end_date: End date string (optional)
-
-    Returns:
-        Tuple of parsed datetime objects in UTC timezone
-
-    Raises:
-        ValidationError: If date range is invalid
-    """
-    if not start_date and not end_date:
-        return None, None
-
-    if start_date and not end_date:
-        raise ValidationError("End date is required when start date is provided.")
-
-    if end_date and not start_date:
-        raise ValidationError("Start date is required when end date is provided.")
-
-    # Validate date format
-    start_parsed = validate_date(start_date) if start_date else None
-    end_parsed = validate_date(end_date) if end_date else None
-
-    if start_parsed and end_parsed and start_parsed >= end_parsed:
-        raise ValidationError("Start date must be before end date.")
-
-    # Convert to UTC timezone datetimes for analysis
-    if start_date and end_date:
-        from datetime import timezone
-
-        start_dt = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
-        end_dt = end_dt.replace(
-            hour=23, minute=59, second=59, microsecond=999999, tzinfo=timezone.utc
-        )
-        return start_dt, end_dt
-
-    return None, None
-
-
 def generate_zenrows_report(
     project_name: Optional[str] = None,
     single_date: Optional[datetime] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
 ) -> str:
-    """Generate zenrows error report for specified date(s).
+    """Generate zenrows error report for specified date.
 
     Args:
         project_name: Project to analyze (optional, defaults to all projects)
-        single_date: Single date to analyze (optional)
-        start_date: Start of date range (optional)
-        end_date: End of date range (optional)
+        single_date: Single date to analyze (required)
 
     Returns:
         CSV formatted report string
@@ -119,8 +70,6 @@ def generate_zenrows_report(
                 data_dir=data_dir,
                 project_name=project_name,
                 single_date=single_date,
-                start_date=start_date,
-                end_date=end_date,
             )
         else:
             # Multi-project analysis - aggregate across all projects
@@ -141,8 +90,6 @@ def generate_zenrows_report(
                     data_dir=data_dir,
                     project_name=current_project,
                     single_date=single_date,
-                    start_date=start_date,
-                    end_date=end_date,
                 )
 
                 # Merge results by date
@@ -274,17 +221,9 @@ def generate_zenrows_detail_report(
 
 @report_app.command("zenrows-errors")
 def zenrows_errors_command(
+    date: str = typer.Option(..., "--date", "-d", help="Date to generate report for (YYYY-MM-DD)"),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
-    ),
-    date: Optional[str] = typer.Option(
-        None, "--date", "-d", help="Generate report for a specific date (YYYY-MM-DD)"
-    ),
-    start_date: Optional[str] = typer.Option(
-        None, "--start-date", help="Start date for date range report (YYYY-MM-DD)"
-    ),
-    end_date: Optional[str] = typer.Option(
-        None, "--end-date", help="End date for date range report (YYYY-MM-DD)"
     ),
 ) -> None:
     """
@@ -296,10 +235,7 @@ def zenrows_errors_command(
     Examples:
 
       # Single day report for specific project
-      lse report zenrows-errors --project my-project --date 2025-08-29
-
-      # Date range report for specific project
-      lse report zenrows-errors --project my-project --start-date 2025-08-01 --end-date 2025-08-31
+      lse report zenrows-errors --date 2025-08-29 --project my-project
 
       # All projects (aggregated)
       lse report zenrows-errors --date 2025-08-29
@@ -307,45 +243,15 @@ def zenrows_errors_command(
     logger.info("Starting zenrows error report generation")
 
     try:
-        # Validate that at least one date parameter is provided
-        if not date and not (start_date or end_date):
-            raise ValidationError(
-                "At least one date parameter is required. "
-                "Use --date for single day or --start-date/--end-date for range."
-            )
+        # Parse and validate date parameter
+        report_dt = validate_date(date)
+        from datetime import timezone
 
-        # Validate that single date and date range are not mixed
-        if date and (start_date or end_date):
-            raise ValidationError(
-                "Cannot use --date with --start-date/--end-date. "
-                "Use either single date OR date range parameters."
-            )
+        report_dt = report_dt.replace(tzinfo=timezone.utc)
+        logger.info(f"Generating report for date: {date} (UTC timezone)")
 
-        # Parse and validate date parameters
-        if date:
-            # Single date mode with UTC timezone handling
-            single_dt = validate_date(date)
-            from datetime import timezone
-
-            single_dt = single_dt.replace(tzinfo=timezone.utc)
-            logger.info(f"Generating report for single date: {date} (UTC timezone)")
-
-            report_output = generate_zenrows_report(project_name=project, single_date=single_dt)
-
-        else:
-            # Date range mode
-            start_dt, end_dt = validate_date_range(start_date, end_date)
-
-            if start_date and not end_date:
-                raise ValidationError("--end-date is required when using --start-date")
-            if end_date and not start_date:
-                raise ValidationError("--start-date is required when using --end-date")
-
-            logger.info(f"Generating report for date range: {start_date} to {end_date}")
-
-            report_output = generate_zenrows_report(
-                project_name=project, start_date=start_dt, end_date=end_dt
-            )
+        # Generate report for single date
+        report_output = generate_zenrows_report(project_name=project, single_date=report_dt)
 
         # Output CSV to stdout
         typer.echo(report_output)
