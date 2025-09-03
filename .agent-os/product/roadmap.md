@@ -318,7 +318,70 @@ lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-p
 - Migration plan for existing range usage
 - No Google Drive API changes required
 
-## Phase 5: Advanced Reporting & Automation
+## Phase 5: Zenrows Errors Detail Report 🔄 PLANNED
+
+**Goal:** Create detailed report command for zenrows errors grouped by crypto symbol and root trace
+**Success Criteria:** Generate hierarchical reports showing zenrows errors organized by crypto symbol and root trace
+
+### Problem Statement
+Current zenrows error reporting only provides aggregate counts and error rates. Stakeholders need detailed visibility into:
+1. Which crypto symbols are experiencing zenrows errors
+2. Which specific root traces contain the errors
+3. The relationship between crypto symbols, traces, and errors for deeper analysis
+
+### Target Report Format
+```
+crypto symbol: BTC
+  root trace: trace_123_btc_scrape
+    zenrows-error: Connection timeout after 30s
+  root trace: trace_456_btc_analysis
+    zenrows-error: Rate limit exceeded
+    zenrows-error: Invalid API response
+
+crypto symbol: ETH
+  root trace: trace_789_eth_scrape
+    zenrows-error: Proxy connection failed
+```
+
+### Features
+
+- [ ] **New report command** - Add `lse report zenrows-detail` command `M`
+- [ ] **Crypto symbol extraction** - Parse traces to identify cryptocurrency symbols from trace context `M`
+- [ ] **Root trace grouping** - Group errors by their root trace ID and metadata `S`
+- [ ] **Hierarchical formatting** - Display crypto symbol → root trace → error hierarchy `S`
+- [ ] **Error message extraction** - Extract and display actual error messages from traces `M`
+- [ ] **Date filtering support** - Support --date and date range parameters like other commands `S`
+- [ ] **Project filtering** - Filter by project like other report commands `S`
+- [ ] **Multiple output formats** - Support both hierarchical text and structured JSON output `S`
+
+### Command Interface Design
+```bash
+# Single day detailed report for specific project
+lse report zenrows-detail --project my-project --date 2025-08-28
+
+# Date range detailed report
+lse report zenrows-detail --project my-project --start-date 2025-08-01 --end-date 2025-08-31
+
+# All projects aggregated
+lse report zenrows-detail --date 2025-08-28
+
+# JSON output for programmatic processing
+lse report zenrows-detail --date 2025-08-28 --format json
+```
+
+### Implementation Requirements
+1. **Crypto Symbol Detection**: Parse trace metadata or names to identify target cryptocurrency
+2. **Root Trace Identification**: Handle trace hierarchy to identify the root trace for each error
+3. **Error Message Extraction**: Extract detailed error messages from zenrows_scraper traces
+4. **Hierarchical Data Structure**: Build nested data structure for organized output
+5. **Output Formatting**: Clean, readable hierarchical display with proper indentation
+
+### Dependencies
+- Existing trace data with zenrows_scraper errors
+- Understanding of trace structure and metadata for crypto symbol extraction
+- Consistent with existing report command interface patterns
+
+## Phase 6: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
 **Success Criteria:** Support multiple report types and automated daily data collection
