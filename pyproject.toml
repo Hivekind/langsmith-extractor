@@ -32,6 +32,12 @@ python_functions = ["test_*"]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+    "pytest-cov>=6.2.1",
+]
+
 [tool.setuptools.packages.find]
 include = ["lse*"]
 

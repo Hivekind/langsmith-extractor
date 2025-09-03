@@ -1,0 +1,3 @@
+# Spec Summary (Lite)
+
+Create a detailed zenrows error reporting command that provides hierarchical visibility into errors grouped by cryptocurrency symbol and root trace. The command will parse archived trace data to extract crypto symbols, organize errors in a crypto → trace → error hierarchy, and display results with clear indentation for easy analysis of error patterns across different cryptocurrencies.

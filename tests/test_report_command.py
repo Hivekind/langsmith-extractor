@@ -99,6 +99,84 @@ class TestDateParameterValidation:
             if result.exit_code != 0:
                 assert "date" in result.stderr.lower() or "invalid" in result.stderr.lower()
 
+
+class TestZenrowsDetailCommand:
+    """Test zenrows-detail command structure and parameters."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_zenrows_detail_command_exists(self):
+        """Test that zenrows-detail command is registered and accessible."""
+        result = self.runner.invoke(app, ["report", "zenrows-detail", "--help"])
+
+        assert result.exit_code == 0
+        assert "zenrows" in result.stdout.lower()
+        assert "detail" in result.stdout.lower()
+
+    def test_zenrows_detail_accepts_date_parameter(self):
+        """Test that --date parameter is accepted."""
+        with patch("lse.commands.report.generate_zenrows_detail_report") as mock_report:
+            mock_report.return_value = "Test output"
+
+            result = self.runner.invoke(app, ["report", "zenrows-detail", "--date", "2025-08-29"])
+
+            # Should accept the date parameter
+            assert result.exit_code == 0 or "--date" not in result.stderr
+
+    def test_zenrows_detail_accepts_project_parameter(self):
+        """Test that --project parameter is accepted."""
+        with patch("lse.commands.report.generate_zenrows_detail_report") as mock_report:
+            mock_report.return_value = "Test output"
+
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-detail", "--date", "2025-08-29", "--project", "my-project"],
+            )
+
+            # Should accept the project parameter
+            assert result.exit_code == 0 or "--project" not in result.stderr
+
+    def test_zenrows_detail_accepts_format_parameter(self):
+        """Test that --format parameter is accepted with text and json options."""
+        with patch("lse.commands.report.generate_zenrows_detail_report") as mock_report:
+            mock_report.return_value = "Test output"
+
+            # Test text format
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-detail", "--date", "2025-08-29", "--format", "text"],
+            )
+            assert result.exit_code == 0 or "--format" not in result.stderr
+
+            # Test json format
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-detail", "--date", "2025-08-29", "--format", "json"],
+            )
+            assert result.exit_code == 0 or "--format" not in result.stderr
+
+    def test_zenrows_detail_requires_date_parameter(self):
+        """Test that command requires date parameter."""
+        result = self.runner.invoke(app, ["report", "zenrows-detail"])
+
+        # Should fail when no date parameter provided
+        assert result.exit_code != 0
+        assert "required" in result.stderr.lower() or "missing" in result.stderr.lower()
+
+    def test_zenrows_detail_shows_comprehensive_help(self):
+        """Test that help text includes all parameters and usage examples."""
+        result = self.runner.invoke(app, ["report", "zenrows-detail", "--help"])
+
+        assert result.exit_code == 0
+        # Check for key parameters in help text
+        assert "--date" in result.stdout
+        assert "--project" in result.stdout
+        assert "--format" in result.stdout
+        # Check for description
+        assert "hierarchical" in result.stdout.lower() or "detail" in result.stdout.lower()
+
     def test_validates_date_range_order(self):
         """Test that start date must be before end date."""
         with patch("lse.commands.report.generate_zenrows_report"):

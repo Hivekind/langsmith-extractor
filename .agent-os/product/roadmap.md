@@ -318,7 +318,106 @@ lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-p
 - Migration plan for existing range usage
 - No Google Drive API changes required
 
-## Phase 5: Advanced Reporting & Automation
+## Phase 5: Zenrows Errors Detail Report ✅ COMPLETED
+
+**Goal:** Create detailed report command for zenrows errors grouped by crypto symbol and root trace
+**Success Criteria:** Generate hierarchical reports showing zenrows errors organized by crypto symbol and root trace
+
+### Problem Statement
+Current zenrows error reporting only provides aggregate counts and error rates. Stakeholders need detailed visibility into:
+1. Which crypto symbols are experiencing zenrows errors
+2. Which specific root traces contain the errors
+3. The relationship between crypto symbols, traces, and errors for deeper analysis
+
+### Target Report Format
+```
+crypto symbol: BTC
+  root trace: due_diligence_btc_12345
+    Time: 2025-08-20 14:30:15 UTC
+    URL: https://zenrows.com/api/v1/?url=https%3A//example.com
+    zenrows-error: Connection timeout after 30s
+  root trace: due_diligence_btc_67890
+    Time: 2025-08-20 15:45:22 UTC
+    URL: https://zenrows.com/api/v1/?url=https%3A//another.com
+    zenrows-error: Rate limit exceeded
+
+crypto symbol: ETH
+  root trace: due_diligence_eth_11111
+    Time: 2025-08-20 16:12:08 UTC
+    URL: https://zenrows.com/api/v1/?url=https%3A//ethscan.io
+    zenrows-error: Proxy connection failed
+```
+
+### Features
+
+- [x] **New report command** - Add `lse report zenrows-detail` command `M` ✅
+- [x] **Crypto symbol extraction** - Parse traces to identify cryptocurrency symbols from trace context `M` ✅
+- [x] **Root trace grouping** - Group errors by their root trace ID and metadata `S` ✅
+- [x] **Hierarchical formatting** - Display crypto symbol → root trace → error hierarchy `S` ✅
+- [x] **Error message extraction** - Extract and display actual error messages from traces `M` ✅
+- [x] **Date filtering support** - Support --date parameter like other commands `S` ✅
+- [x] **Project filtering** - Filter by project like other report commands `S` ✅
+- [x] **Multiple output formats** - Support both hierarchical text and structured JSON output `S` ✅
+
+### Command Interface Design
+```bash
+# Single day detailed report for specific project
+lse report zenrows-detail --project my-project --date 2025-08-28
+
+# All projects aggregated
+lse report zenrows-detail --date 2025-08-28
+
+# JSON output for programmatic processing
+lse report zenrows-detail --date 2025-08-28 --format json
+```
+
+### Completed Implementation
+
+**Status**: Phase 5 is now complete and production-ready! ✅
+
+#### Core Components Delivered
+
+- **True Root Trace Identification**: Implemented `find_true_root_trace()` to traverse up the trace hierarchy using `trace_id` and `ls_run_depth` fields to find the top-level business trace (e.g., "due_diligence") that initiated the entire trace stack, not just the immediate parent
+- **Enhanced Crypto Symbol Detection**: Built `extract_crypto_symbol()` with comprehensive pattern matching that searches `inputs.input_data.crypto_symbol` fields and trace names for cryptocurrency symbols like BTC, ETH, SOL, etc.
+- **Hierarchical Error Reporting**: Created `build_zenrows_detail_hierarchy()` to organize errors by crypto symbol → true root trace → error details with timestamps and URLs
+- **Multi-line Output Format**: Implemented clean hierarchical text display with separate Time/URL lines for better readability and debugging context
+- **Complete Command Implementation**: Full `lse report zenrows-detail` command with --date, --project, and --format parameters
+
+#### Production Ready Features
+
+✅ **Hierarchical Error Reports**: `lse report zenrows-detail --date 2025-08-20 --project my-project`  
+✅ **True Root Trace Detection**: Identifies business context like "due_diligence" instead of intermediate traces  
+✅ **Enhanced Crypto Symbol Detection**: Finds symbols in `inputs.input_data.crypto_symbol` and trace names  
+✅ **URL and Timestamp Extraction**: Shows zenrows API URLs and error timestamps for debugging  
+✅ **Multi-line Format**: Clean output with separate Time/URL lines for each error  
+✅ **JSON Output Support**: Structured JSON format for programmatic processing  
+✅ **Backward Compatibility**: All existing zenrows-errors functionality preserved  
+
+#### Testing Excellence
+
+- **146 comprehensive tests**: Complete test coverage with zero failures
+- **Dedicated test suite**: New `test_zenrows_detail_analysis.py` with 23 focused tests
+- **Real data validation**: Tested with actual trace data containing zenrows errors
+- **Edge case handling**: Proper handling of missing data, unknown symbols, and malformed traces
+
+#### Files Created/Modified
+- **New Analysis Functions**: Added `find_true_root_trace()`, `extract_crypto_symbol()`, and `build_zenrows_detail_hierarchy()` to `lse/analysis.py`
+- **New Command**: Added `zenrows_detail()` command to `lse/commands/report.py`
+- **New Formatters**: Added `format_zenrows_detail_text()` and `format_zenrows_detail_json()` to `lse/formatters.py`
+- **Comprehensive Tests**: New test file `tests/test_zenrows_detail_analysis.py` with full coverage
+- **Updated CLI**: Integrated command into report command group with proper help text
+
+### Key Deliverables Achieved
+
+1. **Complete `lse report zenrows-detail` command** - Full CLI implementation with comprehensive parameter support
+2. **True root trace identification using trace_id and ls_run_depth** - Fixes business context grouping issues
+3. **Enhanced crypto symbol extraction from inputs.input_data.crypto_symbol** - Significantly improves detection accuracy
+4. **URL and timestamp extraction for error details** - Provides debugging context with zenrows API URLs
+5. **Multi-line output format with separate Time/URL lines** - Clean, readable hierarchical display
+6. **Comprehensive test coverage with 146 tests passing** - Zero test failures, production-ready quality
+7. **Backward compatibility maintained** - No changes to existing zenrows-errors command
+
+## Phase 6: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
 **Success Criteria:** Support multiple report types and automated daily data collection

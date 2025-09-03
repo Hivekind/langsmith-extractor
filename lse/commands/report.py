@@ -175,6 +175,103 @@ def generate_zenrows_report(
         return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
 
+def generate_zenrows_detail_report(
+    project_name: Optional[str] = None,
+    report_date: Optional[datetime] = None,
+    output_format: str = "text",
+) -> str:
+    """Generate detailed zenrows error report with hierarchical grouping.
+
+    Args:
+        project_name: Project to analyze (optional, defaults to all projects)
+        report_date: Date to analyze (required)
+        output_format: Output format - "text" or "json"
+
+    Returns:
+        Formatted report string (text or JSON)
+    """
+    settings = get_settings()
+    data_dir = Path(settings.output_dir)
+
+    # Import analysis functions
+    from lse.analysis import (
+        find_trace_files,
+        parse_trace_file,
+        build_zenrows_detail_hierarchy,
+    )
+
+    try:
+        logger.info(f"Generating zenrows detail report for {report_date.strftime('%Y-%m-%d')}")
+
+        # Handle single project or all projects
+        projects_to_analyze = []
+        if project_name:
+            projects_to_analyze.append(project_name)
+        else:
+            # Get all project directories
+            project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
+            projects_to_analyze = [d.name for d in project_dirs]
+            if not projects_to_analyze:
+                logger.warning(f"No project directories found in {data_dir}")
+                if output_format == "json":
+                    formatter = ReportFormatter()
+                    return formatter.format_zenrows_detail_json(
+                        {}, report_date.strftime("%Y-%m-%d")
+                    )
+                else:
+                    return "No project directories found.\n"
+
+        # Collect traces from all projects
+        all_traces = []
+        for project in projects_to_analyze:
+            logger.info(f"Analyzing project: {project}")
+
+            # Find trace files for the specific date
+            trace_files = find_trace_files(
+                data_dir=data_dir,
+                project_name=project,
+                single_date=report_date,
+            )
+
+            # Parse all trace files
+            for file_path in trace_files:
+                trace_data = parse_trace_file(file_path)
+                if trace_data:
+                    all_traces.append(trace_data)
+
+        if not all_traces:
+            logger.warning(f"No traces found for date {report_date.strftime('%Y-%m-%d')}")
+            if output_format == "json":
+                formatter = ReportFormatter()
+                return formatter.format_zenrows_detail_json(
+                    {}, report_date.strftime("%Y-%m-%d"), project_name
+                )
+            else:
+                return f"No traces found for {report_date.strftime('%Y-%m-%d')}.\n"
+
+        # Build the hierarchical data structure
+        logger.info(f"Building hierarchy from {len(all_traces)} traces")
+        hierarchy = build_zenrows_detail_hierarchy(all_traces)
+
+        # Format the output
+        formatter = ReportFormatter()
+        if output_format == "json":
+            return formatter.format_zenrows_detail_json(
+                hierarchy, report_date.strftime("%Y-%m-%d"), project_name
+            )
+        else:
+            return formatter.format_zenrows_detail_text(hierarchy)
+
+    except Exception as e:
+        logger.error(f"Detail analysis failed: {e}")
+        if output_format == "json":
+            import json
+
+            return json.dumps({"error": str(e)})
+        else:
+            return f"Error: {e}\n"
+
+
 @report_app.command("zenrows-errors")
 def zenrows_errors_command(
     project: Optional[str] = typer.Option(
@@ -262,4 +359,65 @@ def zenrows_errors_command(
     except Exception as e:
         logger.error(f"Report generation failed: {e}")
         typer.echo(f"Error: Report generation failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@report_app.command("zenrows-detail")
+def zenrows_detail_command(
+    date: str = typer.Option(..., "--date", "-d", help="Date to generate report for (YYYY-MM-DD)"),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
+    ),
+    format: str = typer.Option("text", "--format", "-f", help="Output format: text or json"),
+) -> None:
+    """
+    Generate detailed zenrows error report with hierarchical grouping.
+
+    Provides a hierarchical view of zenrows_scraper errors organized by
+    cryptocurrency symbol and root trace, enabling detailed error analysis
+    across different cryptocurrencies and trace contexts.
+
+    The report shows:
+    - Cryptocurrency symbols (BTC, ETH, etc.)
+    - Root traces containing errors
+    - Specific error messages from zenrows_scraper
+
+    Examples:
+
+      # Detailed report for specific project
+      lse report zenrows-detail --date 2025-08-29 --project my-project
+
+      # All projects with JSON output
+      lse report zenrows-detail --date 2025-08-29 --format json
+    """
+    logger.info("Starting zenrows detail report generation")
+
+    try:
+        # Validate format parameter
+        if format not in ["text", "json"]:
+            raise ValidationError(f"Invalid format '{format}'. Must be 'text' or 'json'.")
+
+        # Parse and validate date parameter
+        report_dt = validate_date(date)
+        from datetime import timezone
+
+        report_dt = report_dt.replace(tzinfo=timezone.utc)
+        logger.info(f"Generating detail report for date: {date} (UTC timezone)")
+
+        report_output = generate_zenrows_detail_report(
+            project_name=project, report_date=report_dt, output_format=format
+        )
+
+        # Output report to stdout
+        typer.echo(report_output)
+        logger.info("Detail report generation completed successfully")
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error(f"Detail report generation failed: {e}")
+        typer.echo(f"Error: Detail report generation failed: {e}", err=True)
         raise typer.Exit(1)
