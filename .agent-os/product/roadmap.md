@@ -417,6 +417,55 @@ lse report zenrows-detail --date 2025-08-28 --format json
 6. **Comprehensive test coverage with 146 tests passing** - Zero test failures, production-ready quality
 7. **Backward compatibility maintained** - No changes to existing zenrows-errors command
 
+## Phase 5.5: Standardize Single-Date Parameters 🔄 PLANNED
+
+**Goal:** Remove date range support from all commands to enforce consistent single-date operations
+**Success Criteria:** All commands accept only `--date YYYY-MM-DD` parameter in UTC timezone
+
+### Problem Statement
+
+Currently, the `zenrows-errors` command still supports both single dates (`--date`) and date ranges (`--start-date`/`--end-date`), creating interface inconsistency across the codebase. All other commands (archive, zenrows-detail) use single-date operations only.
+
+### Current Issues
+
+- **Interface Inconsistency**: Mixed single-date and date-range interfaces across commands
+- **Complex Validation**: Additional validation logic for date range parameters
+- **User Confusion**: Different parameter patterns for similar operations
+- **UTC Handling**: Inconsistent timezone handling between single and range dates
+
+### Scope
+
+**Commands to Update:**
+- `lse report zenrows-errors` - Remove `--start-date` and `--end-date` parameters
+- Analysis functions in `lse/analysis.py` - Remove date range support
+- Test files - Update tests to use single-date patterns only
+
+**Files to Modify:**
+- `lse/commands/report.py` - Remove date range parameters and validation
+- `lse/analysis.py` - Remove `start_date`/`end_date` parameters from functions
+- `tests/test_report_command.py` - Update tests to single-date only
+- Documentation and help text updates
+
+### Benefits
+
+- **Consistent Interface**: All commands use identical `--date YYYY-MM-DD` parameter
+- **Simplified Logic**: Remove complex date range validation and timezone handling
+- **Better UX**: Users learn one parameter pattern for all commands
+- **Reduced Code**: Eliminate duplicate date handling paths
+
+### Implementation Plan
+
+- [ ] Remove `--start-date` and `--end-date` parameters from `zenrows-errors` command
+- [ ] Update `validate_date_range()` and related functions to single-date only
+- [ ] Remove date range logic from `generate_zenrows_report()` function
+- [ ] Update `TraceAnalyzer.analyze_zenrows_errors()` to single-date only
+- [ ] Update all tests to use single-date parameters
+- [ ] Update command help text and examples
+- [ ] Verify all 146 tests pass after changes
+
+**Timeline:** 1-2 days  
+**Priority:** Medium - Interface consistency improvement
+
 ## Phase 6: Advanced Reporting & Automation
 
 **Goal:** Expand reporting capabilities and add automation features
