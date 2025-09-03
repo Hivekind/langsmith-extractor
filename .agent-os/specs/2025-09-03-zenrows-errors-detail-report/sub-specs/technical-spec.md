@@ -7,7 +7,7 @@ This is the technical specification for the spec detailed in @.agent-os/specs/20
 ### Command Implementation
 - Create new Typer command `zenrows_detail` in the report command group
 - Command name in CLI: `lse report zenrows-detail`
-- Support both single date (`--date`) and date range (`--start-date`, `--end-date`) parameters
+- Support single date parameter (`--date`) only - consistent with archive commands
 - Include `--project` parameter for project-specific filtering
 - Add `--format` parameter with options: "text" (default) and "json"
 
@@ -69,7 +69,7 @@ This is the technical specification for the spec detailed in @.agent-os/specs/20
 
 ### Error Handling
 - Handle missing or corrupted trace files gracefully
-- Provide clear error messages for invalid date ranges
+- Provide clear error messages for invalid date format
 - Validate project existence before processing
 - Handle traces with missing or malformed error data
 

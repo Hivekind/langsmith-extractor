@@ -27,7 +27,7 @@ The engineer uses the report to see which root traces are experiencing errors, a
 2. **Crypto Symbol Extraction** - Parse trace metadata to identify and extract cryptocurrency symbols from trace context
 3. **Hierarchical Grouping** - Organize errors in crypto symbol → root trace → error message hierarchy
 4. **Error Message Extraction** - Extract and display actual error messages from zenrows_scraper traces
-5. **Date and Project Filtering** - Support standard date filtering (--date, --start-date, --end-date) and project scoping
+5. **Date and Project Filtering** - Support single date filtering (--date only) and project scoping
 
 ## Out of Scope
 
@@ -41,4 +41,4 @@ The engineer uses the report to see which root traces are experiencing errors, a
 
 1. Working `lse report zenrows-detail` command that generates hierarchical error reports from archived trace data
 2. Clear, readable output showing crypto symbol → root trace → error organization with proper indentation
-3. Support for both single-date and date-range queries with project filtering capabilities
+3. Support for single-date queries (--date) with project filtering capabilities, consistent with archive commands
