@@ -17,17 +17,18 @@ The analyst runs the report command for a specific date and receives a hierarchi
 
 ### Root Trace Error Tracking
 
-As an operations engineer, I want to see all zenrows errors grouped by their root trace, so that I can understand the full context of failures and identify systemic issues in our scraping pipelines.
+As an operations engineer, I want to see all zenrows errors grouped by their true root trace (the top-level trace that initiated the entire hierarchy, such as "due_diligence"), so that I can understand the full business context of failures and identify systemic issues in our scraping pipelines.
 
-The engineer uses the report to see which root traces are experiencing errors, allowing them to correlate failures with specific scraping runs or time periods. They can then investigate whether errors are isolated incidents or part of larger infrastructure issues.
+The engineer uses the report to see which top-level business processes are experiencing errors, allowing them to correlate failures with specific business workflows rather than just individual scraper runs. This enables them to understand if errors are affecting specific business operations like due diligence processes or market analysis pipelines.
 
 ## Spec Scope
 
 1. **Report Command** - Add `lse report zenrows-detail` command to generate hierarchical error reports
 2. **Crypto Symbol Extraction** - Parse trace metadata to identify and extract cryptocurrency symbols from trace context
-3. **Hierarchical Grouping** - Organize errors in crypto symbol → root trace → error message hierarchy
-4. **Error Message Extraction** - Extract and display actual error messages from zenrows_scraper traces
-5. **Date and Project Filtering** - Support single date filtering (--date only) and project scoping
+3. **True Root Trace Identification** - Traverse up the trace hierarchy to find the top-level root trace (e.g., "due_diligence") rather than the immediate parent trace containing the zenrows error
+4. **Hierarchical Grouping** - Organize errors in crypto symbol → true root trace → error message hierarchy
+5. **Error Message Extraction** - Extract and display actual error messages from zenrows_scraper traces
+6. **Date and Project Filtering** - Support single date filtering (--date only) and project scoping
 
 ## Out of Scope
 

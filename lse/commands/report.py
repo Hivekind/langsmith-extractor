@@ -190,22 +190,77 @@ def generate_zenrows_detail_report(
     Returns:
         Formatted report string (text or JSON)
     """
-    # These will be used in the full implementation
-    # settings = get_settings()
-    # data_dir = Path(settings.output_dir)
-    # analyzer = TraceAnalyzer()
+    settings = get_settings()
+    data_dir = Path(settings.output_dir)
+
+    # Import analysis functions
+    from lse.analysis import (
+        find_trace_files,
+        parse_trace_file,
+        build_zenrows_detail_hierarchy,
+    )
 
     try:
-        # For now, return a placeholder to make tests pass
-        # Full implementation will be added in subsequent tasks
-        if output_format == "json":
-            import json
+        logger.info(f"Generating zenrows detail report for {report_date.strftime('%Y-%m-%d')}")
 
-            return json.dumps(
-                {"status": "not_implemented", "message": "Zenrows detail report coming soon"}
+        # Handle single project or all projects
+        projects_to_analyze = []
+        if project_name:
+            projects_to_analyze.append(project_name)
+        else:
+            # Get all project directories
+            project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
+            projects_to_analyze = [d.name for d in project_dirs]
+            if not projects_to_analyze:
+                logger.warning(f"No project directories found in {data_dir}")
+                if output_format == "json":
+                    formatter = ReportFormatter()
+                    return formatter.format_zenrows_detail_json(
+                        {}, report_date.strftime("%Y-%m-%d")
+                    )
+                else:
+                    return "No project directories found.\n"
+
+        # Collect traces from all projects
+        all_traces = []
+        for project in projects_to_analyze:
+            logger.info(f"Analyzing project: {project}")
+
+            # Find trace files for the specific date
+            trace_files = find_trace_files(
+                data_dir=data_dir,
+                project_name=project,
+                single_date=report_date,
+            )
+
+            # Parse all trace files
+            for file_path in trace_files:
+                trace_data = parse_trace_file(file_path)
+                if trace_data:
+                    all_traces.append(trace_data)
+
+        if not all_traces:
+            logger.warning(f"No traces found for date {report_date.strftime('%Y-%m-%d')}")
+            if output_format == "json":
+                formatter = ReportFormatter()
+                return formatter.format_zenrows_detail_json(
+                    {}, report_date.strftime("%Y-%m-%d"), project_name
+                )
+            else:
+                return f"No traces found for {report_date.strftime('%Y-%m-%d')}.\n"
+
+        # Build the hierarchical data structure
+        logger.info(f"Building hierarchy from {len(all_traces)} traces")
+        hierarchy = build_zenrows_detail_hierarchy(all_traces)
+
+        # Format the output
+        formatter = ReportFormatter()
+        if output_format == "json":
+            return formatter.format_zenrows_detail_json(
+                hierarchy, report_date.strftime("%Y-%m-%d"), project_name
             )
         else:
-            return "Zenrows Detail Report\n======================\nComing soon: Hierarchical error reporting by crypto symbol and root trace.\n"
+            return formatter.format_zenrows_detail_text(hierarchy)
 
     except Exception as e:
         logger.error(f"Detail analysis failed: {e}")
