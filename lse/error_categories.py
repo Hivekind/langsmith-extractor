@@ -239,16 +239,39 @@ def get_category_breakdown_columns() -> List[str]:
 
     Returns:
         List of category column names ordered by frequency (most common first).
+        Each category has a count column: category_count
     """
     manager = ErrorCategoryManager()
     stats = manager.get_category_statistics()
 
     # Add unknown_errors as the last column
-    columns = [stat["category"] for stat in stats]
-    if "unknown_errors" not in columns:
-        columns.append("unknown_errors")
+    categories = [stat["category"] for stat in stats]
+    if "unknown_errors" not in categories:
+        categories.append("unknown_errors")
+
+    # Generate count columns for each category
+    columns = []
+    for category in categories:
+        columns.append(f"{category}_count")
 
     return columns
+
+
+def get_category_names() -> List[str]:
+    """Get ordered list of category names (without column suffixes).
+
+    Returns:
+        List of category names ordered by frequency (most common first).
+    """
+    manager = ErrorCategoryManager()
+    stats = manager.get_category_statistics()
+
+    # Add unknown_errors as the last column
+    categories = [stat["category"] for stat in stats]
+    if "unknown_errors" not in categories:
+        categories.append("unknown_errors")
+
+    return categories
 
 
 def validate_error_categorization(test_errors: List[Dict[str, Any]]) -> Dict[str, Any]:

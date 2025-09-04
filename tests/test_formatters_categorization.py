@@ -53,7 +53,7 @@ class TestEnhancedCSVFormatting:
 
         # Check header includes all category columns
         header = lines[0]
-        assert header.startswith("Date,Total Traces,Zenrows Errors,Error Rate")
+        assert header.startswith("Date,Total Traces,Zenrows Errors")
 
         # Should include all category columns
         expected_categories = get_category_breakdown_columns()
@@ -85,7 +85,7 @@ class TestEnhancedCSVFormatting:
 
         # Check first data row (2025-09-04)
         data_row_1 = lines[1]
-        assert data_row_1.startswith("2025-09-04,100,15,0.1500")
+        assert data_row_1.startswith("2025-09-04,100,15")
 
         # Should include category counts: 8,3,2,1,1,0,0 (in frequency order)
         # The exact order depends on get_category_breakdown_columns()
@@ -95,7 +95,7 @@ class TestEnhancedCSVFormatting:
 
         # Check second data row (2025-09-05)
         data_row_2 = lines[2]
-        assert data_row_2.startswith("2025-09-05,80,8,0.1000")
+        assert data_row_2.startswith("2025-09-05,80,8")
 
     def test_category_counts_sum_validation(self):
         """Test that category counts sum to total error count."""
@@ -106,11 +106,14 @@ class TestEnhancedCSVFormatting:
 
         header_parts = lines[0].split(",")
 
-        # Find the indices of category columns
-        category_indices = []
-        for category in get_category_breakdown_columns():
-            if category in header_parts:
-                category_indices.append(header_parts.index(category))
+        # Find the indices of category count columns
+        category_count_indices = []
+        category_columns = get_category_breakdown_columns()
+
+        # All columns are now count columns
+        for count_column in category_columns:
+            if count_column in header_parts:
+                category_count_indices.append(header_parts.index(count_column))
 
         # Check each data row
         for i, line in enumerate(lines[1:], 1):
@@ -118,7 +121,7 @@ class TestEnhancedCSVFormatting:
             total_errors = int(parts[2])  # zenrows_errors column
 
             # Sum category counts
-            category_sum = sum(int(parts[idx]) for idx in category_indices)
+            category_sum = sum(int(parts[idx]) for idx in category_count_indices)
 
             assert category_sum == total_errors, (
                 f"Row {i}: category sum ({category_sum}) != total errors ({total_errors})"
@@ -131,11 +134,11 @@ class TestEnhancedCSVFormatting:
         csv_output = self.formatter.format_zenrows_report(test_data)
         header = csv_output.split("\n")[0]
 
-        # Original fields should be in original order at the start
-        expected_start = "Date,Total Traces,Zenrows Errors,Error Rate"
+        # Original fields should be in original order at the start (without error rate)
+        expected_start = "Date,Total Traces,Zenrows Errors"
         assert header.startswith(expected_start)
 
-        # Category columns should be added after the original columns
+        # Category columns should be added after core columns, error rate at end
         original_columns = expected_start.split(",")
         header_parts = header.split(",")
 
@@ -147,7 +150,8 @@ class TestEnhancedCSVFormatting:
         csv_output = self.formatter.format_zenrows_report({})
 
         # Should return basic header even with no data
-        assert csv_output.startswith("Date,Total Traces,Zenrows Errors,Error Rate")
+        assert "Date,Total Traces,Zenrows Errors" in csv_output
+        assert csv_output.endswith("Error Rate\n")
         assert csv_output.count("\n") == 1  # Just header + newline
 
     def test_missing_categories_handling(self):
@@ -167,7 +171,7 @@ class TestEnhancedCSVFormatting:
         # Should still work and show zeros for all categories
         assert len(lines) == 2  # header + 1 data row
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,100,5,0.0500")
+        assert data_row.startswith("2025-09-04,100,5")
 
     def test_zero_errors_all_categories_zero(self):
         """Test that when no errors exist, all categories are zero."""
@@ -192,7 +196,7 @@ class TestEnhancedCSVFormatting:
         lines = csv_output.strip().split("\n")
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,100,0,0.0000")
+        assert data_row.startswith("2025-09-04,100,0")
 
         # All category columns should show 0
         assert ",0," in data_row or data_row.endswith(",0")
@@ -223,7 +227,7 @@ class TestEnhancedCSVFormatting:
         assert "unknown_errors" in header
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,50,3,0.0600")
+        assert data_row.startswith("2025-09-04,50,3")
 
     def test_date_sorting_maintained(self):
         """Test that date sorting is maintained in enhanced output."""
@@ -295,11 +299,15 @@ class TestCategoryColumnGeneration:
 
         # Should be ordered by frequency from ErrorCategoryManager
         assert isinstance(columns, list)
-        assert len(columns) >= 6  # At least the 6 main categories
+        assert len(columns) >= 7  # At least 7 categories with count columns
 
-        # Most common categories should be first
-        assert columns[0] == "http_404_not_found"  # 50.4%
-        assert columns[1] == "http_422_unprocessable"  # 18.2%
+        # Most common categories should be first (count columns only)
+        assert columns[0] == "http_404_not_found_count"  # 50.4%
+        assert columns[1] == "http_422_unprocessable_count"  # 18.2%
+        assert columns[2] == "read_timeout_count"  # 13.2%
+
+        # Unknown errors should be last
+        assert columns[-1] == "unknown_errors_count"
 
     def test_all_categories_included_in_csv(self):
         """Test that all defined categories are included in CSV output."""
@@ -309,7 +317,15 @@ class TestCategoryColumnGeneration:
                 "total_traces": 100,
                 "zenrows_errors": 0,
                 "error_rate": 0.0,
-                "categories": {cat: 0 for cat in get_category_breakdown_columns()},
+                "categories": {
+                    "http_404_not_found": 0,
+                    "http_422_unprocessable": 0,
+                    "read_timeout": 0,
+                    "http_413_too_large": 0,
+                    "http_400_bad_request": 0,
+                    "http_503_service_unavailable": 0,
+                    "unknown_errors": 0,
+                },
             }
         }
 
@@ -352,7 +368,7 @@ class TestProductionDataPatterns:
         assert len(lines) == 2  # header + 1 data row
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,1000,121,0.1210")
+        assert data_row.startswith("2025-09-04,1000,121")
 
         # Verify that the most common error types are represented
         assert "61" in data_row  # http_404_not_found count
@@ -398,8 +414,8 @@ class TestProductionDataPatterns:
         assert len(lines) == 3  # header + 2 data rows
 
         # Check both days are properly formatted
-        assert lines[1].startswith("2025-09-04,500,25,0.0500")
-        assert lines[2].startswith("2025-09-05,750,30,0.0400")
+        assert lines[1].startswith("2025-09-04,500,25")
+        assert lines[2].startswith("2025-09-05,750,30")
 
     def test_edge_case_all_unknown_errors(self):
         """Test handling when all errors are unknown/unclassified."""
@@ -424,5 +440,5 @@ class TestProductionDataPatterns:
         csv_output = formatter.format_zenrows_report(unknown_heavy_data)
 
         # Should handle gracefully
-        assert "2025-09-04,100,10,0.1000" in csv_output
+        assert "2025-09-04,100,10" in csv_output
         assert "unknown_errors" in csv_output.split("\n")[0]  # In header

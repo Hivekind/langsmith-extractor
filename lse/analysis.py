@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
 from lse.exceptions import ValidationError
-from lse.error_categories import categorize_zenrows_error, get_category_breakdown_columns
+from lse.error_categories import categorize_zenrows_error, get_category_names
 
 logger = logging.getLogger("lse.analysis")
 
@@ -338,7 +338,7 @@ class TraceAnalyzer:
             # Count zenrows errors across ALL traces (both root and child)
             # Also collect category statistics
             category_counts = {}
-            for category in get_category_breakdown_columns():
+            for category in get_category_names():
                 category_counts[category] = 0
 
             for trace in date_traces:

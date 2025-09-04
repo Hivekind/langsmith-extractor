@@ -30,7 +30,8 @@ class TestRealDataIntegration:
 
         # Should succeed and produce CSV output
         assert result.exit_code == 0
-        assert "Date,Total Traces,Zenrows Errors,Error Rate" in result.stdout
+        assert "Date,Total Traces,Zenrows Errors" in result.stdout
+        assert "Error Rate" in result.stdout
 
         # Should have at least header line
         lines = result.stdout.strip().split("\n")
@@ -41,6 +42,35 @@ class TestRealDataIntegration:
             data_line = lines[1]
             assert "2025-08-29" in data_line
 
+    def test_report_with_real_trace_data_date_range(self):
+        """Test report command with real trace data for date range."""
+        if not self.data_dir.exists():
+            pytest.skip("No data directory found for integration testing")
+
+        with patch.dict(os.environ, {}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-errors",
+                    "--start-date",
+                    "2025-08-25",
+                    "--end-date",
+                    "2025-08-29",
+                ],
+            )
+
+        assert result.exit_code == 0
+        assert "Date,Total Traces,Zenrows Errors" in result.stdout
+        assert "Error Rate" in result.stdout
+
+        lines = result.stdout.strip().split("\n")
+        assert len(lines) >= 1  # At least header
+
+        # Dates should be sorted if data exists
+        if len(lines) > 2:
+            dates = [line.split(",")[0] for line in lines[1:]]
+            assert dates == sorted(dates)
     def test_report_output_format_matches_spec(self):
         """Test that output format matches enhanced specification with categories."""
         if not self.data_dir.exists():
@@ -53,9 +83,9 @@ class TestRealDataIntegration:
         assert result.exit_code == 0
         lines = result.stdout.split("\n")
 
-        # Header should start with original columns followed by category columns
+        # Header should start with core columns, then category columns, then error rate at end
         header = lines[0]
-        assert header.startswith("Date,Total Traces,Zenrows Errors,Error Rate")
+        assert header.startswith("Date,Total Traces,Zenrows Errors")
 
         # Should include category columns if there are categorized errors
 
@@ -83,8 +113,8 @@ class TestRealDataIntegration:
             assert zenrows_errors >= 0
             assert zenrows_errors <= total_traces
 
-            # Error rate should be decimal number
-            error_rate = data_parts[3]
+            # Error rate should be decimal number (now at the end)
+            error_rate = data_parts[-1]  # Last column
             assert "." in error_rate  # Should have decimal precision
             # Should be numeric (not ending with %)
             float(error_rate)  # This will raise ValueError if not numeric
@@ -202,7 +232,8 @@ class TestErrorHandlingWithRealData:
 
         # Should succeed even if some files can't be parsed
         assert result.exit_code == 0
-        assert "Date,Total Traces,Zenrows Errors,Error Rate" in result.stdout
+        assert "Date,Total Traces,Zenrows Errors" in result.stdout
+        assert "Error Rate" in result.stdout
 
 
 class TestCommandLineIntegration:
@@ -219,7 +250,8 @@ class TestCommandLineIntegration:
 
         # CSV should go to stdout, logs to stderr
         assert result.exit_code == 0
-        assert "Date,Total Traces,Zenrows Errors,Error Rate" in result.stdout
+        assert "Date,Total Traces,Zenrows Errors" in result.stdout
+        assert "Error Rate" in result.stdout
 
         # Logs should not be in stdout
         assert "INFO" not in result.stdout

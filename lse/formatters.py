@@ -26,8 +26,8 @@ def format_csv_report(
     """
     logger.info(f"Formatting CSV report: {title}")
 
-    # Build CSV header - start with original columns
-    header_parts = ["Date", "Total Traces", "Zenrows Errors", "Error Rate"]
+    # Build CSV header - start with core columns (without error rate)
+    header_parts = ["Date", "Total Traces", "Zenrows Errors"]
 
     # Check if any data has categories to determine if we need category columns
     has_categories = False
@@ -41,6 +41,9 @@ def format_csv_report(
         category_columns = get_category_breakdown_columns()
         header_parts.extend(category_columns)
 
+    # Add error rate at the very end
+    header_parts.append("Error Rate")
+
     header = ",".join(header_parts)
     lines = [header]
 
@@ -48,20 +51,25 @@ def format_csv_report(
     for date_key in sorted(analysis_data.keys()):
         data = analysis_data[date_key]
 
-        # Format error rate as decimal (already stored as decimal)
-        error_rate = f"{data['error_rate']:.4f}"
-
-        # Start with original columns
-        line_parts = [date_key, str(data["total_traces"]), str(data["zenrows_errors"]), error_rate]
+        # Start with core columns (without error rate)
+        line_parts = [date_key, str(data["total_traces"]), str(data["zenrows_errors"])]
 
         # Add category counts if present
         if has_categories:
             categories = data.get("categories", {})
             category_columns = get_category_breakdown_columns()
 
-            for category in category_columns:
+            # Each column is a count column now
+            for count_col in category_columns:
+                # Extract category name (remove _count suffix)
+                category = count_col.replace("_count", "")
                 count = categories.get(category, 0)
+
                 line_parts.append(str(count))
+
+        # Add error rate at the very end
+        error_rate = f"{data['error_rate']:.4f}"
+        line_parts.append(error_rate)
 
         line = ",".join(line_parts)
         lines.append(line)
