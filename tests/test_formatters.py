@@ -9,7 +9,7 @@ class TestCSVFormatting:
     def test_format_csv_report_basic(self):
         """Test basic CSV report formatting."""
         analysis_data = {
-            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 20.0},
+            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 0.2},
             "2025-08-30": {"total_traces": 5, "zenrows_errors": 0, "error_rate": 0.0},
         }
 
@@ -17,15 +17,15 @@ class TestCSVFormatting:
 
         lines = result.strip().split("\n")
         assert lines[0] == "Date,Total Traces,Zenrows Errors,Error Rate"
-        assert lines[1] == "2025-08-29,10,2,20.0%"
-        assert lines[2] == "2025-08-30,5,0,0.0%"
+        assert lines[1] == "2025-08-29,10,2,0.2000"
+        assert lines[2] == "2025-08-30,5,0,0.0000"
 
     def test_format_csv_report_sorted_dates(self):
         """Test that CSV output is sorted by date."""
         analysis_data = {
             "2025-08-30": {"total_traces": 5, "zenrows_errors": 0, "error_rate": 0.0},
-            "2025-08-28": {"total_traces": 8, "zenrows_errors": 1, "error_rate": 12.5},
-            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 20.0},
+            "2025-08-28": {"total_traces": 8, "zenrows_errors": 1, "error_rate": 0.125},
+            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 0.2},
         }
 
         result = format_csv_report(analysis_data)
@@ -47,13 +47,13 @@ class TestCSVFormatting:
             "2025-08-29": {
                 "total_traces": 3,
                 "zenrows_errors": 1,
-                "error_rate": 33.333333,  # Should be formatted to 33.3%
+                "error_rate": 0.333333,  # Should be formatted to 33.3%
             }
         }
 
         result = format_csv_report(analysis_data)
 
-        assert "33.3%" in result
+        assert "0.3333" in result
 
 
 class TestSummaryStatistics:
@@ -62,8 +62,8 @@ class TestSummaryStatistics:
     def test_format_summary_stats_basic(self):
         """Test basic summary statistics calculation."""
         analysis_data = {
-            "2025-08-28": {"total_traces": 10, "zenrows_errors": 1, "error_rate": 10.0},
-            "2025-08-29": {"total_traces": 20, "zenrows_errors": 4, "error_rate": 20.0},
+            "2025-08-28": {"total_traces": 10, "zenrows_errors": 1, "error_rate": 0.1},
+            "2025-08-29": {"total_traces": 20, "zenrows_errors": 4, "error_rate": 0.2},
             "2025-08-30": {"total_traces": 5, "zenrows_errors": 0, "error_rate": 0.0},
         }
 
@@ -72,7 +72,7 @@ class TestSummaryStatistics:
         assert stats["total_days"] == 3
         assert stats["total_traces"] == 35
         assert stats["total_zenrows_errors"] == 5
-        assert stats["overall_error_rate"] == 14.3  # 5/35 * 100 = 14.285...
+        assert abs(stats["overall_error_rate"] - 0.142857) < 0.000001  # 5/35 = 0.142857...
         assert stats["worst_day"] == "2025-08-29"
         assert stats["best_day"] == "2025-08-30"
 
@@ -89,9 +89,7 @@ class TestSummaryStatistics:
 
     def test_format_summary_stats_single_day(self):
         """Test summary statistics with single day data."""
-        analysis_data = {
-            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 20.0}
-        }
+        analysis_data = {"2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 0.2}}
 
         stats = format_summary_stats(analysis_data)
 
@@ -109,14 +107,12 @@ class TestReportFormatter:
 
     def test_format_zenrows_report(self):
         """Test zenrows-specific report formatting."""
-        analysis_data = {
-            "2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 20.0}
-        }
+        analysis_data = {"2025-08-29": {"total_traces": 10, "zenrows_errors": 2, "error_rate": 0.2}}
 
         result = self.formatter.format_zenrows_report(analysis_data)
 
         assert "Date,Total Traces,Zenrows Errors,Error Rate" in result
-        assert "2025-08-29,10,2,20.0%" in result
+        assert "2025-08-29,10,2,0.2000" in result
 
     def test_format_zenrows_report_empty(self):
         """Test zenrows report formatting with empty data."""
@@ -127,8 +123,8 @@ class TestReportFormatter:
     def test_format_summary(self):
         """Test human-readable summary formatting."""
         analysis_data = {
-            "2025-08-28": {"total_traces": 10, "zenrows_errors": 1, "error_rate": 10.0},
-            "2025-08-29": {"total_traces": 20, "zenrows_errors": 4, "error_rate": 20.0},
+            "2025-08-28": {"total_traces": 10, "zenrows_errors": 1, "error_rate": 0.1},
+            "2025-08-29": {"total_traces": 20, "zenrows_errors": 4, "error_rate": 0.2},
         }
 
         result = self.formatter.format_summary(analysis_data)
@@ -137,7 +133,7 @@ class TestReportFormatter:
         assert "2 day(s)" in result
         assert "Total traces analyzed: 30" in result
         assert "Total zenrows errors: 5" in result
-        assert "Overall error rate: 16.7%" in result
+        assert "Overall error rate: 16.7%" in result  # 5/30 = 0.1666... -> 16.7%
         assert "Worst day: 2025-08-29 (20.0%)" in result
         assert "Best day: 2025-08-28 (10.0%)" in result
 
@@ -156,10 +152,10 @@ class TestOutputIntegration:
         # Simulate realistic analysis results
         analysis_data = {
             "2025-08-25": {"total_traces": 15, "zenrows_errors": 0, "error_rate": 0.0},
-            "2025-08-26": {"total_traces": 32, "zenrows_errors": 3, "error_rate": 9.4},
-            "2025-08-27": {"total_traces": 28, "zenrows_errors": 7, "error_rate": 25.0},
-            "2025-08-28": {"total_traces": 41, "zenrows_errors": 2, "error_rate": 4.9},
-            "2025-08-29": {"total_traces": 19, "zenrows_errors": 1, "error_rate": 5.3},
+            "2025-08-26": {"total_traces": 32, "zenrows_errors": 3, "error_rate": 0.094},
+            "2025-08-27": {"total_traces": 28, "zenrows_errors": 7, "error_rate": 0.25},
+            "2025-08-28": {"total_traces": 41, "zenrows_errors": 2, "error_rate": 0.049},
+            "2025-08-29": {"total_traces": 19, "zenrows_errors": 1, "error_rate": 0.053},
         }
 
         formatter = ReportFormatter()
@@ -175,8 +171,8 @@ class TestOutputIntegration:
         assert dates_in_output == sorted(dates_in_output)
 
         # Verify specific data points
-        assert "2025-08-27,28,7,25.0%" in csv_output
-        assert "2025-08-25,15,0,0.0%" in csv_output
+        assert "2025-08-27,28,7,0.2500" in csv_output
+        assert "2025-08-25,15,0,0.0000" in csv_output
 
     def test_stdout_compatibility(self):
         """Test that output is compatible with stdout piping."""

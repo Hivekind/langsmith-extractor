@@ -217,8 +217,9 @@ class TestErrorLogging:
 
     @patch("builtins.open", new_callable=mock_open)
     @patch("lse.error_categories.datetime")
+    @patch.dict("os.environ", {"LSE_DEBUG_UNKNOWN_ERRORS": "1"}, clear=False)
     def test_log_unknown_error(self, mock_datetime, mock_file):
-        """Test logging of unknown errors to file."""
+        """Test logging of unknown errors to file when debug flag is enabled."""
         from lse.error_categories import log_unknown_error
 
         # Mock datetime
@@ -250,8 +251,9 @@ class TestErrorLogging:
 
     @patch("pathlib.Path.mkdir")
     @patch("builtins.open", new_callable=mock_open)
+    @patch.dict("os.environ", {"LSE_DEBUG_UNKNOWN_ERRORS": "1"}, clear=False)
     def test_log_creates_directory(self, mock_file, mock_mkdir):
-        """Test that logging creates logs directory if it doesn't exist."""
+        """Test that logging creates logs directory if it doesn't exist when debug flag is enabled."""
         from lse.error_categories import log_unknown_error
 
         error_record = {
@@ -264,6 +266,23 @@ class TestErrorLogging:
 
         # Should create logs directory
         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
+
+    @patch("builtins.open", new_callable=mock_open)
+    @patch.dict("os.environ", {}, clear=True)  # No debug flag set
+    def test_log_disabled_when_no_debug_flag(self, mock_file):
+        """Test that logging is disabled when debug flag is not set."""
+        from lse.error_categories import log_unknown_error
+
+        error_record = {
+            "error_message": "UnknownError: New type of error",
+            "trace_id": "trace-123",
+            "project": "test-project",
+        }
+
+        log_unknown_error(error_record)
+
+        # Should not open any files when debug flag is disabled
+        mock_file.assert_not_called()
 
 
 class TestProductionDataValidation:

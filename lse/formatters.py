@@ -48,8 +48,8 @@ def format_csv_report(
     for date_key in sorted(analysis_data.keys()):
         data = analysis_data[date_key]
 
-        # Format error rate as percentage with 1 decimal place
-        error_rate = f"{data['error_rate']:.1f}%"
+        # Format error rate as decimal (already stored as decimal)
+        error_rate = f"{data['error_rate']:.4f}"
 
         # Start with original columns
         line_parts = [date_key, str(data["total_traces"]), str(data["zenrows_errors"]), error_rate]
@@ -101,7 +101,7 @@ def format_summary_stats(
 
     overall_error_rate = 0.0
     if total_traces > 0:
-        overall_error_rate = round((total_errors / total_traces) * 100, 1)
+        overall_error_rate = round(total_errors / total_traces, 6)
 
     # Find best and worst days
     worst_day = None
@@ -174,13 +174,13 @@ class ReportFormatter:
         lines.append(f"Analysis period: {stats['total_days']} day(s)")
         lines.append(f"Total traces analyzed: {stats['total_traces']}")
         lines.append(f"Total zenrows errors: {stats['total_zenrows_errors']}")
-        lines.append(f"Overall error rate: {stats['overall_error_rate']:.1f}%")
+        lines.append(f"Overall error rate: {stats['overall_error_rate'] * 100:.1f}%")
 
         if stats["worst_day"] and stats["best_day"]:
             worst_data = analysis_data[stats["worst_day"]]
             best_data = analysis_data[stats["best_day"]]
-            lines.append(f"Worst day: {stats['worst_day']} ({worst_data['error_rate']:.1f}%)")
-            lines.append(f"Best day: {stats['best_day']} ({best_data['error_rate']:.1f}%)")
+            lines.append(f"Worst day: {stats['worst_day']} ({worst_data['error_rate'] * 100:.1f}%)")
+            lines.append(f"Best day: {stats['best_day']} ({best_data['error_rate'] * 100:.1f}%)")
 
         return "\n".join(lines) + "\n"
 

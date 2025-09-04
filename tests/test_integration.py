@@ -52,15 +52,13 @@ class TestRealDataIntegration:
         # Verify command succeeds
         assert result.exit_code == 0
         lines = result.stdout.split("\n")
-        
+
         # Header should start with original columns followed by category columns
         header = lines[0]
         assert header.startswith("Date,Total Traces,Zenrows Errors,Error Rate")
-        
+
         # Should include category columns if there are categorized errors
-        from lse.error_categories import get_category_breakdown_columns
-        expected_categories = get_category_breakdown_columns()
-        
+
         # Verify data format if data exists
         if len(lines) > 1 and lines[1]:
             data_parts = lines[1].split(",")
@@ -71,10 +69,12 @@ class TestRealDataIntegration:
             date_part = data_parts[0]
             assert len(date_part) == 10
             assert date_part.count("-") == 2
-            
+
             # If there are category columns in header, data should have those too
             header_parts = header.split(",")
-            assert len(data_parts) == len(header_parts), f"Data columns ({len(data_parts)}) != header columns ({len(header_parts)})"
+            assert len(data_parts) == len(header_parts), (
+                f"Data columns ({len(data_parts)}) != header columns ({len(header_parts)})"
+            )
 
             # Numbers should be integers
             total_traces = int(data_parts[1])
@@ -83,10 +83,11 @@ class TestRealDataIntegration:
             assert zenrows_errors >= 0
             assert zenrows_errors <= total_traces
 
-            # Error rate should be percentage
+            # Error rate should be decimal number
             error_rate = data_parts[3]
-            assert error_rate.endswith("%")
             assert "." in error_rate  # Should have decimal precision
+            # Should be numeric (not ending with %)
+            float(error_rate)  # This will raise ValueError if not numeric
 
     def test_report_handles_missing_data_gracefully(self):
         """Test report command with date that has no data."""

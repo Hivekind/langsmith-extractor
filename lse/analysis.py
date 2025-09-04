@@ -223,7 +223,7 @@ def calculate_error_rates(
         if total_traces == 0:
             error_rate = 0.0
         else:
-            error_rate = round((zenrows_errors / total_traces) * 100, 1)
+            error_rate = round(zenrows_errors / total_traces, 6)
 
         result[date_key] = {
             "total_traces": total_traces,

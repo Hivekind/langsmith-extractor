@@ -352,7 +352,7 @@ class TestErrorRateCalculation:
 
         rates = calculate_error_rates(daily_data)
 
-        assert rates["2025-08-29"]["error_rate"] == 20.0
+        assert rates["2025-08-29"]["error_rate"] == 0.2
         assert rates["2025-08-30"]["error_rate"] == 0.0
 
     def test_calculate_error_rates_zero_traces(self):
@@ -375,7 +375,7 @@ class TestErrorRateCalculation:
         rates = calculate_error_rates(daily_data)
 
         # Should round to 1 decimal place
-        assert abs(rates["2025-08-29"]["error_rate"] - 33.3) < 0.1
+        assert abs(rates["2025-08-29"]["error_rate"] - 0.333333) < 0.000001
 
 
 class TestTraceAnalyzer:
@@ -425,8 +425,74 @@ class TestTraceAnalyzer:
             assert "2025-08-29" in result
             assert result["2025-08-29"]["total_traces"] == 1
             assert result["2025-08-29"]["zenrows_errors"] == 1
-            assert result["2025-08-29"]["error_rate"] == 100.0
+            assert result["2025-08-29"]["error_rate"] == 1.0
 
+    def test_analyzer_processes_date_range(self):
+        """Test analyzer processing traces across date range."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+
+            # Create test data for multiple dates
+            project_dir = base_path / "test-project"
+
+            # Day 1: 2 traces, 1 error
+            day1_dir = project_dir / "2025-08-28"
+            day1_dir.mkdir(parents=True)
+
+            trace1_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace1"},
+                "trace": {
+                    "id": "trace1",
+                    "start_time": "2025-08-28 10:00:00",
+                    "child_runs": [{"name": "zenrows_scraper", "status": "error"}],
+                },
+            }
+            trace2_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace2"},
+                "trace": {
+                    "id": "trace2",
+                    "start_time": "2025-08-28 11:00:00",
+                    "child_runs": [{"name": "zenrows_scraper", "status": "success"}],
+                },
+            }
+
+            with open(day1_dir / "trace1.json", "w") as f:
+                json.dump(trace1_data, f)
+            with open(day1_dir / "trace2.json", "w") as f:
+                json.dump(trace2_data, f)
+
+            # Day 2: 1 trace, 0 errors
+            day2_dir = project_dir / "2025-08-29"
+            day2_dir.mkdir(parents=True)
+
+            trace3_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace3"},
+                "trace": {
+                    "id": "trace3",
+                    "start_time": "2025-08-29 09:00:00",
+                    "child_runs": [{"name": "other_tool", "status": "success"}],
+                },
+            }
+
+            with open(day2_dir / "trace3.json", "w") as f:
+                json.dump(trace3_data, f)
+
+            # Analyze the date range
+            result = self.analyzer.analyze_zenrows_errors(
+                data_dir=base_path,
+                project_name="test-project",
+                start_date=datetime(2025, 8, 28),
+                end_date=datetime(2025, 8, 29),
+            )
+
+            assert len(result) == 2
+            assert result["2025-08-28"]["total_traces"] == 2
+            assert result["2025-08-28"]["zenrows_errors"] == 1
+            assert result["2025-08-28"]["error_rate"] == 0.5
+
+            assert result["2025-08-29"]["total_traces"] == 1
+            assert result["2025-08-29"]["zenrows_errors"] == 0
+            assert result["2025-08-29"]["error_rate"] == 0.0
     def test_analyzer_handles_large_trace_files(self):
         """Test that analyzer can handle large trace files efficiently."""
         # This is a placeholder test for memory efficiency
@@ -551,7 +617,7 @@ class TestIntegrationScenarios:
             # Should process valid traces and skip malformed ones
             assert result["2025-08-29"]["total_traces"] == 2
             assert result["2025-08-29"]["zenrows_errors"] == 1
-            assert result["2025-08-29"]["error_rate"] == 50.0
+            assert result["2025-08-29"]["error_rate"] == 0.5
 
     def test_root_vs_child_trace_counting(self):
         """Test that error rate uses root trace count, not total trace count."""
@@ -624,4 +690,4 @@ class TestIntegrationScenarios:
             # Should count only 2 root traces for total, but find 2 errors across all traces
             assert result["2025-08-29"]["total_traces"] == 2  # Only root traces
             assert result["2025-08-29"]["zenrows_errors"] == 2  # Errors from child traces
-            assert result["2025-08-29"]["error_rate"] == 100.0  # 2/2 = 100%
+            assert result["2025-08-29"]["error_rate"] == 1.0  # 2/2 = 100%

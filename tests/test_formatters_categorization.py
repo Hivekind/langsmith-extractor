@@ -17,7 +17,7 @@ class TestEnhancedCSVFormatting:
             "2025-09-04": {
                 "total_traces": 100,
                 "zenrows_errors": 15,
-                "error_rate": 15.0,
+                "error_rate": 0.15,
                 "categories": {
                     "http_404_not_found": 8,  # 53.3% of errors
                     "http_422_unprocessable": 3,  # 20.0% of errors
@@ -31,7 +31,7 @@ class TestEnhancedCSVFormatting:
             "2025-09-05": {
                 "total_traces": 80,
                 "zenrows_errors": 8,
-                "error_rate": 10.0,
+                "error_rate": 0.1,
                 "categories": {
                     "http_404_not_found": 3,
                     "http_422_unprocessable": 2,
@@ -85,7 +85,7 @@ class TestEnhancedCSVFormatting:
 
         # Check first data row (2025-09-04)
         data_row_1 = lines[1]
-        assert data_row_1.startswith("2025-09-04,100,15,15.0%")
+        assert data_row_1.startswith("2025-09-04,100,15,0.1500")
 
         # Should include category counts: 8,3,2,1,1,0,0 (in frequency order)
         # The exact order depends on get_category_breakdown_columns()
@@ -95,7 +95,7 @@ class TestEnhancedCSVFormatting:
 
         # Check second data row (2025-09-05)
         data_row_2 = lines[2]
-        assert data_row_2.startswith("2025-09-05,80,8,10.0%")
+        assert data_row_2.startswith("2025-09-05,80,8,0.1000")
 
     def test_category_counts_sum_validation(self):
         """Test that category counts sum to total error count."""
@@ -156,7 +156,7 @@ class TestEnhancedCSVFormatting:
             "2025-09-04": {
                 "total_traces": 100,
                 "zenrows_errors": 5,
-                "error_rate": 5.0,
+                "error_rate": 0.05,
                 # No 'categories' key
             }
         }
@@ -167,7 +167,7 @@ class TestEnhancedCSVFormatting:
         # Should still work and show zeros for all categories
         assert len(lines) == 2  # header + 1 data row
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,100,5,5.0%")
+        assert data_row.startswith("2025-09-04,100,5,0.0500")
 
     def test_zero_errors_all_categories_zero(self):
         """Test that when no errors exist, all categories are zero."""
@@ -192,7 +192,7 @@ class TestEnhancedCSVFormatting:
         lines = csv_output.strip().split("\n")
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,100,0,0.0%")
+        assert data_row.startswith("2025-09-04,100,0,0.0000")
 
         # All category columns should show 0
         assert ",0," in data_row or data_row.endswith(",0")
@@ -203,7 +203,7 @@ class TestEnhancedCSVFormatting:
             "2025-09-04": {
                 "total_traces": 50,
                 "zenrows_errors": 3,
-                "error_rate": 6.0,
+                "error_rate": 0.06,
                 "categories": {
                     "http_404_not_found": 1,
                     "http_422_unprocessable": 0,
@@ -223,7 +223,7 @@ class TestEnhancedCSVFormatting:
         assert "unknown_errors" in header
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,50,3,6.0%")
+        assert data_row.startswith("2025-09-04,50,3,0.0600")
 
     def test_date_sorting_maintained(self):
         """Test that date sorting is maintained in enhanced output."""
@@ -231,19 +231,19 @@ class TestEnhancedCSVFormatting:
             "2025-09-06": {
                 "total_traces": 30,
                 "zenrows_errors": 2,
-                "error_rate": 6.7,
+                "error_rate": 0.067,
                 "categories": {"http_404_not_found": 2, "unknown_errors": 0},
             },
             "2025-09-04": {
                 "total_traces": 40,
                 "zenrows_errors": 1,
-                "error_rate": 2.5,
+                "error_rate": 0.025,
                 "categories": {"http_404_not_found": 1, "unknown_errors": 0},
             },
             "2025-09-05": {
                 "total_traces": 35,
                 "zenrows_errors": 3,
-                "error_rate": 8.6,
+                "error_rate": 0.086,
                 "categories": {"http_404_not_found": 3, "unknown_errors": 0},
             },
         }
@@ -262,14 +262,14 @@ class TestLegacyCSVCompatibility:
 
     def test_format_csv_report_without_categories(self):
         """Test that legacy format_csv_report function still works."""
-        legacy_data = {"2025-09-04": {"total_traces": 100, "zenrows_errors": 5, "error_rate": 5.0}}
+        legacy_data = {"2025-09-04": {"total_traces": 100, "zenrows_errors": 5, "error_rate": 0.05}}
 
         csv_output = format_csv_report(legacy_data, "Test Report")
         lines = csv_output.strip().split("\n")
 
         assert len(lines) == 2  # header + 1 data row
         assert lines[0] == "Date,Total Traces,Zenrows Errors,Error Rate"
-        assert lines[1] == "2025-09-04,100,5,5.0%"
+        assert lines[1] == "2025-09-04,100,5,0.0500"
 
     def test_existing_tests_compatibility(self):
         """Test that existing formatter usage patterns still work."""
@@ -277,7 +277,7 @@ class TestLegacyCSVCompatibility:
 
         # Test with old-style data (no categories)
         old_style_data = {
-            "2025-09-04": {"total_traces": 50, "zenrows_errors": 2, "error_rate": 4.0}
+            "2025-09-04": {"total_traces": 50, "zenrows_errors": 2, "error_rate": 0.04}
         }
 
         # Should not throw errors
@@ -331,7 +331,7 @@ class TestProductionDataPatterns:
             "2025-09-04": {
                 "total_traces": 1000,
                 "zenrows_errors": 121,  # Based on actual production data
-                "error_rate": 12.1,
+                "error_rate": 0.121,
                 "categories": {
                     "http_404_not_found": 61,  # 50.4% of errors
                     "http_422_unprocessable": 22,  # 18.2% of errors
@@ -352,7 +352,7 @@ class TestProductionDataPatterns:
         assert len(lines) == 2  # header + 1 data row
 
         data_row = lines[1]
-        assert data_row.startswith("2025-09-04,1000,121,12.1%")
+        assert data_row.startswith("2025-09-04,1000,121,0.1210")
 
         # Verify that the most common error types are represented
         assert "61" in data_row  # http_404_not_found count
@@ -364,7 +364,7 @@ class TestProductionDataPatterns:
             "2025-09-04": {
                 "total_traces": 500,
                 "zenrows_errors": 25,
-                "error_rate": 5.0,
+                "error_rate": 0.05,
                 "categories": {
                     "http_404_not_found": 15,
                     "http_422_unprocessable": 5,
@@ -378,7 +378,7 @@ class TestProductionDataPatterns:
             "2025-09-05": {
                 "total_traces": 750,
                 "zenrows_errors": 30,
-                "error_rate": 4.0,
+                "error_rate": 0.04,
                 "categories": {
                     "http_404_not_found": 18,
                     "http_422_unprocessable": 6,
@@ -398,8 +398,8 @@ class TestProductionDataPatterns:
         assert len(lines) == 3  # header + 2 data rows
 
         # Check both days are properly formatted
-        assert lines[1].startswith("2025-09-04,500,25,5.0%")
-        assert lines[2].startswith("2025-09-05,750,30,4.0%")
+        assert lines[1].startswith("2025-09-04,500,25,0.0500")
+        assert lines[2].startswith("2025-09-05,750,30,0.0400")
 
     def test_edge_case_all_unknown_errors(self):
         """Test handling when all errors are unknown/unclassified."""
@@ -407,7 +407,7 @@ class TestProductionDataPatterns:
             "2025-09-04": {
                 "total_traces": 100,
                 "zenrows_errors": 10,
-                "error_rate": 10.0,
+                "error_rate": 0.1,
                 "categories": {
                     "http_404_not_found": 0,
                     "http_422_unprocessable": 0,
@@ -424,5 +424,5 @@ class TestProductionDataPatterns:
         csv_output = formatter.format_zenrows_report(unknown_heavy_data)
 
         # Should handle gracefully
-        assert "2025-09-04,100,10,10.0%" in csv_output
+        assert "2025-09-04,100,10,0.1000" in csv_output
         assert "unknown_errors" in csv_output.split("\n")[0]  # In header

@@ -199,6 +199,12 @@ def log_unknown_error(error_record: Dict[str, Any]):
     Args:
         error_record: Dictionary containing error information.
     """
+    import os
+
+    # Only log if debug flag is enabled
+    if not os.environ.get("LSE_DEBUG_UNKNOWN_ERRORS"):
+        return
+
     try:
         # Ensure logs directory exists
         log_dir = Path("logs")
