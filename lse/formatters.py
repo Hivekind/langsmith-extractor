@@ -6,26 +6,42 @@ from typing import Dict, Union, Any
 
 from rich.console import Console
 from rich.tree import Tree
+from lse.error_categories import get_category_breakdown_columns
 
 logger = logging.getLogger("lse.formatters")
 
 
 def format_csv_report(
-    analysis_data: Dict[str, Dict[str, Union[int, float]]], title: str = "Trace Analysis Report"
+    analysis_data: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]],
+    title: str = "Trace Analysis Report",
 ) -> str:
-    """Format analysis data as CSV report.
+    """Format analysis data as CSV report with optional category breakdown.
 
     Args:
-        analysis_data: Dictionary with date keys and analysis results
+        analysis_data: Dictionary with date keys and analysis results (may include categories)
         title: Optional title for logging (not included in output)
 
     Returns:
-        CSV formatted string with headers and data rows
+        CSV formatted string with headers and data rows including category columns if present
     """
     logger.info(f"Formatting CSV report: {title}")
 
-    # CSV header
-    header = "Date,Total Traces,Zenrows Errors,Error Rate"
+    # Build CSV header - start with original columns
+    header_parts = ["Date", "Total Traces", "Zenrows Errors", "Error Rate"]
+
+    # Check if any data has categories to determine if we need category columns
+    has_categories = False
+    for data in analysis_data.values():
+        if "categories" in data:
+            has_categories = True
+            break
+
+    if has_categories:
+        # Add category columns in frequency order
+        category_columns = get_category_breakdown_columns()
+        header_parts.extend(category_columns)
+
+    header = ",".join(header_parts)
     lines = [header]
 
     # Sort dates for consistent output
@@ -35,14 +51,27 @@ def format_csv_report(
         # Format error rate as percentage with 1 decimal place
         error_rate = f"{data['error_rate']:.1f}%"
 
-        # Create CSV row
-        line = f"{date_key},{data['total_traces']},{data['zenrows_errors']},{error_rate}"
+        # Start with original columns
+        line_parts = [date_key, str(data["total_traces"]), str(data["zenrows_errors"]), error_rate]
+
+        # Add category counts if present
+        if has_categories:
+            categories = data.get("categories", {})
+            category_columns = get_category_breakdown_columns()
+
+            for category in category_columns:
+                count = categories.get(category, 0)
+                line_parts.append(str(count))
+
+        line = ",".join(line_parts)
         lines.append(line)
 
     # Join with newlines and add final newline
     result = "\n".join(lines) + "\n"
 
-    logger.debug(f"Generated CSV report with {len(lines) - 1} data rows")
+    logger.debug(
+        f"Generated CSV report with {len(lines) - 1} data rows and {len(header_parts)} columns"
+    )
     return result
 
 
@@ -106,19 +135,22 @@ class ReportFormatter:
         """Initialize the report formatter."""
         self.logger = logging.getLogger("lse.formatters.ReportFormatter")
 
-    def format_zenrows_report(self, analysis_data: Dict[str, Dict[str, Union[int, float]]]) -> str:
-        """Format zenrows error analysis data as CSV report.
+    def format_zenrows_report(
+        self, analysis_data: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]]
+    ) -> str:
+        """Format zenrows error analysis data as CSV report with optional category breakdown.
 
         Args:
-            analysis_data: Analysis results from TraceAnalyzer
+            analysis_data: Analysis results from TraceAnalyzer (may include category data)
 
         Returns:
-            CSV formatted report string
+            CSV formatted report string with category columns if categories are present
         """
         self.logger.info("Formatting zenrows error report")
 
         if not analysis_data:
             self.logger.warning("No analysis data provided, returning empty report")
+            # Return basic header for backward compatibility when no data is provided
             return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
         return format_csv_report(analysis_data, "Zenrows Error Rate Report")

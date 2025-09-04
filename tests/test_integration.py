@@ -42,27 +42,39 @@ class TestRealDataIntegration:
             assert "2025-08-29" in data_line
 
     def test_report_output_format_matches_spec(self):
-        """Test that output format exactly matches specification."""
+        """Test that output format matches enhanced specification with categories."""
         if not self.data_dir.exists():
             pytest.skip("No data directory found for integration testing")
 
         with patch.dict(os.environ, {}, clear=True):
             result = self.runner.invoke(app, ["report", "zenrows-errors", "--date", "2025-08-29"])
 
-        # Verify exact header format
+        # Verify command succeeds
         assert result.exit_code == 0
         lines = result.stdout.split("\n")
-        assert lines[0] == "Date,Total Traces,Zenrows Errors,Error Rate"
-
+        
+        # Header should start with original columns followed by category columns
+        header = lines[0]
+        assert header.startswith("Date,Total Traces,Zenrows Errors,Error Rate")
+        
+        # Should include category columns if there are categorized errors
+        from lse.error_categories import get_category_breakdown_columns
+        expected_categories = get_category_breakdown_columns()
+        
         # Verify data format if data exists
         if len(lines) > 1 and lines[1]:
             data_parts = lines[1].split(",")
-            assert len(data_parts) == 4
+            # Should have at least 4 original columns, plus potentially category columns
+            assert len(data_parts) >= 4
 
             # Date format: YYYY-MM-DD
             date_part = data_parts[0]
             assert len(date_part) == 10
             assert date_part.count("-") == 2
+            
+            # If there are category columns in header, data should have those too
+            header_parts = header.split(",")
+            assert len(data_parts) == len(header_parts), f"Data columns ({len(data_parts)}) != header columns ({len(header_parts)})"
 
             # Numbers should be integers
             total_traces = int(data_parts[1])
