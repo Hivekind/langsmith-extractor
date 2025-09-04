@@ -98,6 +98,17 @@ def generate_zenrows_report(
                         # Aggregate data for this date across projects
                         all_results[date_key]["total_traces"] += data["total_traces"]
                         all_results[date_key]["zenrows_errors"] += data["zenrows_errors"]
+
+                        # Aggregate category counts
+                        existing_categories = all_results[date_key].get("categories", {})
+                        new_categories = data.get("categories", {})
+
+                        for category, count in new_categories.items():
+                            existing_categories[category] = (
+                                existing_categories.get(category, 0) + count
+                            )
+
+                        all_results[date_key]["categories"] = existing_categories
                     else:
                         all_results[date_key] = data.copy()
 

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
 from lse.exceptions import ValidationError
+from lse.error_categories import categorize_zenrows_error, get_category_breakdown_columns
 
 logger = logging.getLogger("lse.analysis")
 
@@ -82,8 +83,10 @@ def parse_trace_file(file_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Extract zenrows_scraper errors from trace data.
+def extract_zenrows_errors(
+    trace_data: Dict[str, Any], project_name: str = "unknown"
+) -> List[Dict[str, Any]]:
+    """Extract zenrows_scraper errors from trace data with categorization.
 
     Checks the root trace first for zenrows_scraper errors, then recursively
     searches through child runs (if they exist) to find sub-traces with name
@@ -91,25 +94,41 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Args:
         trace_data: Parsed trace data
+        project_name: Project name for error logging context
 
     Returns:
-        List of error records containing details about zenrows failures
+        List of error records containing details about zenrows failures with categories
     """
     errors = []
+
+    def create_error_record(run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an error record with categorization."""
+        error_message = run_data.get("error", "Unknown error")
+
+        # Create basic error record
+        error_record = {
+            "id": run_data.get("id"),
+            "name": run_data.get("name"),
+            "status": run_data.get("status"),
+            "error": error_message,
+            "start_time": run_data.get("start_time"),
+            "end_time": run_data.get("end_time"),
+            "error_message": error_message,  # For categorization
+            "trace_id": trace_data.get("id", "unknown"),  # Root trace ID
+            "project": project_name,  # For logging context
+        }
+
+        # Add categorization
+        error_record["category"] = categorize_zenrows_error(error_record)
+
+        return error_record
 
     # First check if the root trace itself is a zenrows_scraper with error
     root_name = trace_data.get("name", "").lower()
     root_status = trace_data.get("status", "").lower()
 
     if "zenrows_scraper" in root_name and root_status == "error":
-        error_record = {
-            "id": trace_data.get("id"),
-            "name": trace_data.get("name"),
-            "status": trace_data.get("status"),
-            "error": trace_data.get("error", "Unknown error"),
-            "start_time": trace_data.get("start_time"),
-            "end_time": trace_data.get("end_time"),
-        }
+        error_record = create_error_record(trace_data)
         errors.append(error_record)
 
     def search_child_runs(runs: List[Dict[str, Any]]) -> None:
@@ -126,14 +145,7 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
             status = run.get("status", "").lower()
 
             if "zenrows_scraper" in name and status == "error":
-                error_record = {
-                    "id": run.get("id"),
-                    "name": run.get("name"),
-                    "status": run.get("status"),
-                    "error": run.get("error", "Unknown error"),
-                    "start_time": run.get("start_time"),
-                    "end_time": run.get("end_time"),
-                }
+                error_record = create_error_record(run)
                 errors.append(error_record)
 
             # Recursively search nested child runs
@@ -191,21 +203,22 @@ def group_by_date(traces: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
 
 
 def calculate_error_rates(
-    daily_data: Dict[str, Dict[str, int]],
-) -> Dict[str, Dict[str, Union[int, float]]]:
-    """Calculate error rates for daily trace data.
+    daily_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Union[int, float, Dict[str, int]]]]:
+    """Calculate error rates for daily trace data with category preservation.
 
     Args:
-        daily_data: Dictionary with date keys and trace/error counts
+        daily_data: Dictionary with date keys and trace/error counts/categories
 
     Returns:
-        Dictionary with error rates added to each day's data
+        Dictionary with error rates added to each day's data and categories preserved
     """
     result = {}
 
     for date_key, data in daily_data.items():
         total_traces = data["total_traces"]
         zenrows_errors = data["zenrows_errors"]
+        categories = data.get("categories", {})
 
         if total_traces == 0:
             error_rate = 0.0
@@ -216,9 +229,47 @@ def calculate_error_rates(
             "total_traces": total_traces,
             "zenrows_errors": zenrows_errors,
             "error_rate": error_rate,
+            "categories": categories,
         }
 
     return result
+
+
+def validate_category_totals(
+    analysis_results: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]],
+) -> None:
+    """Validate that category counts sum to total error counts.
+
+    Args:
+        analysis_results: Results from analyze_zenrows_errors containing categories
+
+    Raises:
+        ValidationError: If category totals don't match expected error counts
+    """
+    for date_key, data in analysis_results.items():
+        total_errors = data.get("zenrows_errors", 0)
+        categories = data.get("categories", {})
+
+        if not categories:
+            # If no categories, should have no errors
+            if total_errors > 0:
+                logger.warning(f"Date {date_key}: Found {total_errors} errors but no categories")
+            continue
+
+        category_sum = sum(categories.values())
+
+        if category_sum != total_errors:
+            error_msg = (
+                f"Category validation failed for {date_key}: "
+                f"category sum ({category_sum}) != total errors ({total_errors}). "
+                f"Categories: {categories}"
+            )
+            logger.error(error_msg)
+            raise ValidationError(error_msg)
+
+        logger.debug(
+            f"Category validation passed for {date_key}: {category_sum} errors categorized"
+        )
 
 
 class TraceAnalyzer:
@@ -285,17 +336,35 @@ class TraceAnalyzer:
             total_errors = 0
 
             # Count zenrows errors across ALL traces (both root and child)
+            # Also collect category statistics
+            category_counts = {}
+            for category in get_category_breakdown_columns():
+                category_counts[category] = 0
+
             for trace in date_traces:
-                errors = extract_zenrows_errors(trace)
+                errors = extract_zenrows_errors(trace, project_name)
                 total_errors += len(errors)
+
+                # Count errors by category
+                for error in errors:
+                    category = error.get("category", "unknown_errors")
+                    if category in category_counts:
+                        category_counts[category] += 1
+                    else:
+                        # Handle unexpected categories
+                        category_counts[category] = category_counts.get(category, 0) + 1
 
             daily_data[date_key] = {
                 "total_traces": total_root_traces,
                 "zenrows_errors": total_errors,
+                "categories": category_counts,
             }
 
         # Calculate error rates
         result = calculate_error_rates(daily_data)
+
+        # Validate category counts sum to total errors
+        validate_category_totals(result)
 
         self.logger.info(f"Analysis completed for {len(result)} days")
         return result
