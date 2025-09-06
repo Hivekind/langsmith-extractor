@@ -277,6 +277,206 @@ def generate_zenrows_report(
         return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
 
+def generate_zenrows_url_patterns_report(
+    project_name: Optional[str] = None,
+    single_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    top: Optional[int] = None,
+    verbose: bool = False,
+) -> str:
+    """Generate zenrows URL pattern analysis report.
+
+    Args:
+        project_name: Project to analyze (optional, defaults to all projects)
+        single_date: Single date to analyze (optional)
+        start_date: Start of date range (optional)
+        end_date: End of date range (optional)
+        top: Limit results to top N entries (optional)
+        verbose: Show detailed progress information
+
+    Returns:
+        Formatted report string showing domain and file type statistics
+    """
+    settings = get_settings()
+    data_dir = Path(settings.output_dir)
+
+    # Initialize the trace analyzer
+    analyzer = TraceAnalyzer()
+
+    # Set up progress tracking
+    if verbose:
+        progress_console = Console(stderr=True)
+        progress_console.print("[blue]🔍 Starting zenrows URL pattern analysis...[/blue]")
+
+    try:
+        if project_name:
+            # Single project analysis
+            logger.info(f"Analyzing URL patterns for project: {project_name}")
+            if verbose:
+                progress_console.print(f"[green]📁 Analyzing project:[/green] {project_name}")
+
+            url_results = analyzer.analyze_url_patterns(
+                data_dir=data_dir,
+                project_name=project_name,
+                single_date=single_date,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            if verbose and url_results:
+                total_analyzed = url_results.get("total_analyzed", 0)
+                domains_count = len(url_results.get("domains", {}))
+                file_types_count = len(url_results.get("file_types", {}))
+                progress_console.print("[cyan]📊 URL Pattern Analysis Summary:[/cyan]")
+                progress_console.print(f"  Total errors analyzed: {total_analyzed:,}")
+                progress_console.print(f"  Unique domains found: {domains_count}")
+                progress_console.print(f"  File types found: {file_types_count}")
+        else:
+            # Multi-project analysis - aggregate across all projects
+            project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
+            if not project_dirs:
+                logger.warning(f"No project directories found in {data_dir}")
+                return "Domain,Count,File Type,Error Categories\n"
+
+            if verbose:
+                progress_console.print(
+                    f"[green]📂 Found {len(project_dirs)} projects to analyze[/green]"
+                )
+
+            # Aggregate results across all projects
+            all_domains = {}
+            all_file_types = {}
+            total_analyzed = 0
+            traces_without_urls = 0
+
+            # Use progress bar for multi-project analysis
+            if verbose:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=progress_console,
+                ) as progress:
+                    task = progress.add_task("Analyzing projects", total=len(project_dirs))
+
+                    for project_dir in project_dirs:
+                        current_project = project_dir.name
+                        logger.info(f"Analyzing URL patterns for project: {current_project}")
+                        progress.update(task, description=f"Analyzing {current_project}")
+
+                        # Analyze URL patterns for this project
+                        project_results = analyzer.analyze_url_patterns(
+                            data_dir=data_dir,
+                            project_name=current_project,
+                            single_date=single_date,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
+
+                        # Merge domain results
+                        for domain, stats in project_results.get("domains", {}).items():
+                            if domain not in all_domains:
+                                all_domains[domain] = {"count": 0, "error_categories": {}}
+                            all_domains[domain]["count"] += stats["count"]
+
+                            # Merge error categories
+                            for category, count in stats.get("error_categories", {}).items():
+                                if category not in all_domains[domain]["error_categories"]:
+                                    all_domains[domain]["error_categories"][category] = 0
+                                all_domains[domain]["error_categories"][category] += count
+
+                        # Merge file type results
+                        for file_type, stats in project_results.get("file_types", {}).items():
+                            if file_type not in all_file_types:
+                                all_file_types[file_type] = {"count": 0, "error_categories": {}}
+                            all_file_types[file_type]["count"] += stats["count"]
+
+                            # Merge error categories
+                            for category, count in stats.get("error_categories", {}).items():
+                                if category not in all_file_types[file_type]["error_categories"]:
+                                    all_file_types[file_type]["error_categories"][category] = 0
+                                all_file_types[file_type]["error_categories"][category] += count
+
+                        # Update totals
+                        total_analyzed += project_results.get("total_analyzed", 0)
+                        traces_without_urls += project_results.get("traces_without_urls", 0)
+
+                        progress.advance(task)
+            else:
+                # Non-verbose mode - just process without progress bar
+                for project_dir in project_dirs:
+                    current_project = project_dir.name
+                    logger.info(f"Analyzing URL patterns for project: {current_project}")
+
+                    # Analyze URL patterns for this project
+                    project_results = analyzer.analyze_url_patterns(
+                        data_dir=data_dir,
+                        project_name=current_project,
+                        single_date=single_date,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+
+                    # Merge results (same logic as verbose mode)
+                    for domain, stats in project_results.get("domains", {}).items():
+                        if domain not in all_domains:
+                            all_domains[domain] = {"count": 0, "error_categories": {}}
+                        all_domains[domain]["count"] += stats["count"]
+
+                        for category, count in stats.get("error_categories", {}).items():
+                            if category not in all_domains[domain]["error_categories"]:
+                                all_domains[domain]["error_categories"][category] = 0
+                            all_domains[domain]["error_categories"][category] += count
+
+                    for file_type, stats in project_results.get("file_types", {}).items():
+                        if file_type not in all_file_types:
+                            all_file_types[file_type] = {"count": 0, "error_categories": {}}
+                        all_file_types[file_type]["count"] += stats["count"]
+
+                        for category, count in stats.get("error_categories", {}).items():
+                            if category not in all_file_types[file_type]["error_categories"]:
+                                all_file_types[file_type]["error_categories"][category] = 0
+                            all_file_types[file_type]["error_categories"][category] += count
+
+                    total_analyzed += project_results.get("total_analyzed", 0)
+                    traces_without_urls += project_results.get("traces_without_urls", 0)
+
+            # Sort by frequency (descending)
+            all_domains = dict(
+                sorted(all_domains.items(), key=lambda x: x[1]["count"], reverse=True)
+            )
+            all_file_types = dict(
+                sorted(all_file_types.items(), key=lambda x: x[1]["count"], reverse=True)
+            )
+
+            # Create aggregated results structure
+            url_results = {
+                "domains": all_domains,
+                "file_types": all_file_types,
+                "total_analyzed": total_analyzed,
+                "traces_without_urls": traces_without_urls,
+            }
+
+            if verbose and url_results:
+                domains_count = len(url_results.get("domains", {}))
+                file_types_count = len(url_results.get("file_types", {}))
+                progress_console.print("[cyan]📊 URL Pattern Analysis Summary:[/cyan]")
+                progress_console.print(f"  Total errors analyzed: {total_analyzed:,}")
+                progress_console.print(f"  Unique domains found: {domains_count}")
+                progress_console.print(f"  File types found: {file_types_count}")
+
+        # Format results using formatter
+        formatter = ReportFormatter()
+        return formatter.format_zenrows_url_patterns_report(url_results, top)
+
+    except Exception as e:
+        logger.error(f"URL pattern analysis failed: {e}")
+        # Return empty report with header on error
+        return "Type,Name,Count,Top Error Categories\n"
+
+
 def generate_zenrows_detail_report(
     project_name: Optional[str] = None,
     report_date: Optional[datetime] = None,
@@ -476,9 +676,117 @@ def zenrows_errors_command(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
+
+@report_app.command("zenrows-url-patterns")
+def zenrows_url_patterns_command(
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
+    ),
+    date: Optional[str] = typer.Option(
+        None, "--date", "-d", help="Generate report for a specific date (YYYY-MM-DD)"
+    ),
+    start_date: Optional[str] = typer.Option(
+        None, "--start-date", help="Start date for date range report (YYYY-MM-DD)"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date", help="End date for date range report (YYYY-MM-DD)"
+    ),
+    top: Optional[int] = typer.Option(
+        None, "--top", help="Limit results to top N entries (e.g., --top 10)"
+    ),
+    verbose: bool = typer.Option(
+        False, "--verbose", "-v", help="Show detailed progress and analysis statistics"
+    ),
+) -> None:
+    """
+    Analyze URL patterns and domains from zenrows_scraper errors.
+
+    Identifies problematic URL patterns, domains, and file types from ZenRows
+    error data to help identify sites that need special handling or configuration.
+
+    The analysis includes:
+    - Domain analysis: Which domains are causing the most errors
+    - File type analysis: Error patterns by file type (PDFs, images, APIs, HTML)
+    - Error categorization: Top error categories for each domain/file type
+    - Frequency ranking: Results sorted by error count (most problematic first)
+
+    Output Format:
+    Type,Name,Count,Top Error Categories
+    domain,example.com,45,http_404_not_found(30);http_422_unprocessable(15)
+    file_type,pdf,32,http_413_too_large(20);http_404_not_found(12)
+
+    Examples:
+
+      # Single day analysis for specific project
+      lse report zenrows-url-patterns --project my-project --date 2025-08-29
+
+      # Date range analysis with top 20 results
+      lse report zenrows-url-patterns --start-date 2025-08-01 --end-date 2025-08-31 --top 20
+
+      # All projects with verbose output
+      lse report zenrows-url-patterns --date 2025-08-29 --verbose --top 10
+    """
+    logger.info("Starting zenrows URL pattern analysis")
+
+    try:
+        # Validate that at least one date parameter is provided
+        if not date and not (start_date or end_date):
+            raise ValidationError(
+                "At least one date parameter is required. "
+                "Use --date for single day or --start-date/--end-date for range."
+            )
+
+        # Validate that single date and date range are not mixed
+        if date and (start_date or end_date):
+            raise ValidationError(
+                "Cannot use --date with --start-date/--end-date. "
+                "Use either single date OR date range parameters."
+            )
+
+        # Validate top parameter
+        if top is not None and top <= 0:
+            raise ValidationError("--top must be a positive number")
+
+        # Parse and validate date parameters
+        if date:
+            # Single date mode with UTC timezone handling
+            single_dt = validate_date(date)
+            from datetime import timezone
+
+            single_dt = single_dt.replace(tzinfo=timezone.utc)
+            logger.info(f"Generating URL pattern report for single date: {date} (UTC timezone)")
+
+            report_output = generate_zenrows_url_patterns_report(
+                project_name=project, single_date=single_dt, top=top, verbose=verbose
+            )
+
+        else:
+            # Date range mode
+            start_dt, end_dt = validate_date_range(start_date, end_date)
+
+            if start_date and not end_date:
+                raise ValidationError("--end-date is required when using --start-date")
+            if end_date and not start_date:
+                raise ValidationError("--start-date is required when using --end-date")
+
+            logger.info(f"Generating URL pattern report for date range: {start_date} to {end_date}")
+
+            report_output = generate_zenrows_url_patterns_report(
+                project_name=project, start_date=start_dt, end_date=end_dt, top=top, verbose=verbose
+            )
+
+        # Output report to stdout
+        typer.echo(report_output)
+        logger.info("URL pattern analysis completed successfully")
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
     except Exception as e:
-        logger.error(f"Report generation failed: {e}")
-        typer.echo(f"Error: Report generation failed: {e}", err=True)
+        logger.error(f"URL pattern analysis failed: {e}")
+        typer.echo(f"Error: URL pattern analysis failed: {e}", err=True)
         raise typer.Exit(1)
 
 

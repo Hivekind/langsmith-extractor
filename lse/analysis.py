@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Any, Union
 
 from lse.exceptions import ValidationError
 from lse.error_categories import categorize_zenrows_error, get_category_names
+from lse.utils import extract_domain_from_url, classify_file_type
 
 logger = logging.getLogger("lse.analysis")
 
@@ -106,6 +107,13 @@ def extract_zenrows_errors(
         error_message = run_data.get("error", "Unknown error")
 
         # Create basic error record
+        # Extract target URL from inputs
+        target_url = None
+        inputs = run_data.get("inputs", {})
+        if inputs and isinstance(inputs, dict):
+            # Try different possible input fields for URL
+            target_url = inputs.get("input") or inputs.get("url") or inputs.get("target_url")
+
         error_record = {
             "id": run_data.get("id"),
             "name": run_data.get("name"),
@@ -116,6 +124,7 @@ def extract_zenrows_errors(
             "error_message": error_message,  # For categorization
             "trace_id": trace_data.get("id", "unknown"),  # Root trace ID
             "project": project_name,  # For logging context
+            "target_url": target_url,  # Add target URL extraction
         }
 
         # Add categorization
@@ -367,6 +376,136 @@ class TraceAnalyzer:
         validate_category_totals(result)
 
         self.logger.info(f"Analysis completed for {len(result)} days")
+        return result
+
+    def analyze_url_patterns(
+        self,
+        data_dir: Path,
+        project_name: str,
+        single_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Analyze URL patterns and domains from zenrows_scraper errors.
+
+        Args:
+            data_dir: Base directory containing trace data
+            project_name: Name of the project to analyze
+            single_date: Single date to analyze (optional)
+            start_date: Start of date range (optional)
+            end_date: End of date range (optional)
+
+        Returns:
+            Dictionary with URL pattern statistics including domains and file types
+        """
+        self.logger.info("Starting URL pattern analysis")
+
+        # Find relevant trace files using existing infrastructure
+        trace_files = find_trace_files(
+            data_dir=data_dir,
+            project_name=project_name,
+            single_date=single_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if not trace_files:
+            self.logger.warning("No trace files found for analysis")
+            return {"domains": {}, "file_types": {}, "traces_without_urls": 0, "total_analyzed": 0}
+
+        # Parse all trace files
+        traces = []
+        for file_path in trace_files:
+            trace_data = parse_trace_file(file_path)
+            if trace_data:
+                traces.append(trace_data)
+
+        if not traces:
+            self.logger.warning("No valid traces found after parsing")
+            return {"domains": {}, "file_types": {}, "traces_without_urls": 0, "total_analyzed": 0}
+
+        # Group traces by date and filter by requested dates
+        grouped_traces = group_by_date(traces)
+
+        if single_date:
+            requested_date = single_date.strftime("%Y-%m-%d")
+            grouped_traces = {k: v for k, v in grouped_traces.items() if k == requested_date}
+        elif start_date or end_date:
+            start_str = start_date.strftime("%Y-%m-%d") if start_date else "0000-00-00"
+            end_str = end_date.strftime("%Y-%m-%d") if end_date else "9999-12-31"
+            grouped_traces = {k: v for k, v in grouped_traces.items() if start_str <= k <= end_str}
+
+        # Aggregate URL pattern statistics across all dates
+        domain_stats = {}
+        file_type_stats = {}
+        traces_without_urls = 0
+        total_analyzed = 0
+
+        for date_key, date_traces in grouped_traces.items():
+            for trace in date_traces:
+                # Extract zenrows errors to get URL data
+                errors = extract_zenrows_errors(trace, project_name)
+
+                for error in errors:
+                    total_analyzed += 1
+                    target_url = error.get("target_url")
+
+                    if not target_url:
+                        traces_without_urls += 1
+                        continue
+
+                    # Extract domain and file type using utilities from Task 1
+                    domain = extract_domain_from_url(target_url)
+                    file_type = classify_file_type(target_url)
+
+                    # Get error category for this error
+                    error_category = error.get("category", "unknown_errors")
+
+                    # Update domain statistics
+                    if domain:
+                        if domain not in domain_stats:
+                            domain_stats[domain] = {"count": 0, "error_categories": {}}
+
+                        domain_stats[domain]["count"] += 1
+
+                        # Track error categories for this domain
+                        if error_category not in domain_stats[domain]["error_categories"]:
+                            domain_stats[domain]["error_categories"][error_category] = 0
+                        domain_stats[domain]["error_categories"][error_category] += 1
+
+                    # Update file type statistics
+                    if file_type:
+                        if file_type not in file_type_stats:
+                            file_type_stats[file_type] = {"count": 0, "error_categories": {}}
+
+                        file_type_stats[file_type]["count"] += 1
+
+                        # Track error categories for this file type
+                        if error_category not in file_type_stats[file_type]["error_categories"]:
+                            file_type_stats[file_type]["error_categories"][error_category] = 0
+                        file_type_stats[file_type]["error_categories"][error_category] += 1
+
+        # Sort domains and file types by frequency (descending)
+        sorted_domains = dict(
+            sorted(domain_stats.items(), key=lambda x: x[1]["count"], reverse=True)
+        )
+
+        sorted_file_types = dict(
+            sorted(file_type_stats.items(), key=lambda x: x[1]["count"], reverse=True)
+        )
+
+        result = {
+            "domains": sorted_domains,
+            "file_types": sorted_file_types,
+            "traces_without_urls": traces_without_urls,
+            "total_analyzed": total_analyzed,
+        }
+
+        self.logger.info(
+            f"URL pattern analysis completed: {len(sorted_domains)} domains, "
+            f"{len(sorted_file_types)} file types, {total_analyzed} total errors analyzed"
+        )
+
         return result
 
 

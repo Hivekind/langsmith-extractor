@@ -4,6 +4,7 @@ import logging
 import time
 from contextlib import contextmanager
 from typing import Any, Callable, List, Optional, TypeVar, Iterator
+from urllib.parse import urlparse
 
 from rich.console import Console
 from rich.progress import (
@@ -360,3 +361,215 @@ class OperationTimer:
             end = self.end_time or time.time()
             return end - self.start_time
         return None
+
+
+def extract_domain_from_url(url: Optional[str]) -> Optional[str]:
+    """
+    Extract domain from URL.
+
+    Args:
+      url: URL string to parse
+
+    Returns:
+      Domain name or None if URL is invalid
+
+    Examples:
+      >>> extract_domain_from_url("https://example.com/path")
+      'example.com'
+      >>> extract_domain_from_url("invalid-url")
+      None
+    """
+    if not url or not isinstance(url, str):
+        return None
+
+    # Quick check for obviously invalid URLs
+    if url.strip() == "" or url.startswith("://"):
+        return None
+
+    # Handle URLs without protocol
+    if not url.startswith(("http://", "https://", "//")):
+        # Try to extract domain directly if it looks like a simple domain/path pattern
+        if "/" in url:
+            potential_domain = url.split("/")[0]
+            if _is_valid_domain_format(potential_domain):
+                return potential_domain
+        # Check if it looks like a valid domain
+        elif _is_valid_domain_format(url):
+            return url
+        # Add protocol for parsing
+        url = f"http://{url}"
+
+    try:
+        parsed = urlparse(url)
+        if parsed.netloc and _is_valid_domain_format(parsed.netloc):
+            return parsed.netloc
+        return None
+    except Exception:
+        return None
+
+
+def _is_valid_domain_format(domain: str) -> bool:
+    """
+    Check if a string has a valid domain format.
+
+    Args:
+      domain: Domain string to validate
+
+    Returns:
+      True if domain format looks valid
+    """
+    if not domain or domain.startswith(".") or domain.endswith("."):
+        return False
+
+    # Must contain a dot (for domain.tld format) or be localhost with port
+    has_dot = "." in domain
+    has_port = ":" in domain and domain.split(":")[0]  # localhost:8080 format
+
+    if not (has_dot or has_port):
+        return False
+
+    # Check for valid characters only
+    if not all(c.isalnum() or c in ".-:" for c in domain):
+        return False
+
+    # Additional checks to prevent edge cases
+    if domain == ":" or domain.count(":") > 1:  # Invalid port formats
+        return False
+
+    return True
+
+
+def classify_file_type(url: Optional[str]) -> str:
+    """
+    Classify file type based on URL extension and patterns.
+
+    Args:
+      url: URL or filename to classify
+
+    Returns:
+      File type category: 'pdf', 'image', 'api', 'html', or 'other'
+
+    Examples:
+      >>> classify_file_type("document.pdf")
+      'pdf'
+      >>> classify_file_type("https://api.example.com/data")
+      'api'
+      >>> classify_file_type("image.png")
+      'image'
+    """
+    if not url or not isinstance(url, str):
+        return "other"
+
+    # Convert to lowercase for comparison
+    url_lower = url.lower()
+
+    # Remove query parameters and fragments for extension detection
+    clean_url = url_lower.split("?")[0].split("#")[0]
+
+    # Early check for obviously invalid URLs
+    if (
+        clean_url.strip() == ""
+        or clean_url.startswith("://")
+        or (
+            not clean_url.startswith(("http://", "https://"))
+            and "/" not in clean_url
+            and "." not in clean_url
+            and clean_url.replace("-", "").replace("_", "").isalpha()
+        )
+    ):
+        return "other"
+
+    # Check query parameters for format hints first
+    if "?" in url_lower:
+        query_part = url_lower.split("?")[1]
+        if "format=pdf" in query_part or "type=pdf" in query_part:
+            return "pdf"
+        if any(fmt in query_part for fmt in ["format=json", "format=xml", "type=json", "type=xml"]):
+            return "api"
+
+    # Check for API patterns first (before extension check)
+    if (
+        "api" in url_lower
+        or "graphql" in url_lower
+        or "rest" in url_lower
+        or "/v1/" in url_lower
+        or "/v2/" in url_lower
+        or "/v3/" in url_lower
+    ):
+        return "api"
+
+    # Check file extensions - properly handle URLs vs simple filenames
+    extension = None
+    if "." in clean_url and not clean_url.endswith("/"):
+        if clean_url.startswith(("http://", "https://")):
+            # For URLs, check only the filename part of the path
+            try:
+                parsed = urlparse(clean_url)
+                if parsed.path and parsed.path != "/":
+                    # Get the last segment of the path (potential filename)
+                    path_parts = parsed.path.strip("/").split("/")
+                    if path_parts and path_parts[-1]:
+                        filename = path_parts[-1]
+                        if "." in filename:
+                            extension = filename.split(".")[-1].lower()
+            except (ValueError, AttributeError, IndexError):
+                pass
+        else:
+            # Simple filename - get extension directly
+            filename_parts = clean_url.split(".")
+            if len(filename_parts) > 1:
+                extension = filename_parts[-1].split("/")[0]  # Handle cases like .pdf/path
+
+    # Classify based on extension
+    if extension:
+        # PDF files
+        if extension == "pdf":
+            return "pdf"
+
+        # Image files
+        if extension in ["jpg", "jpeg", "png", "gif", "svg", "webp", "bmp", "tiff"]:
+            return "image"
+
+        # API data formats (excluding CSV which is more general purpose)
+        if extension in ["json", "xml", "rss", "atom", "yaml", "yml"]:
+            return "api"
+
+        # HTML files
+        if extension in ["html", "htm"]:
+            return "html"
+
+        # Other file types (including CSV, TXT, ZIP, etc.)
+        return "other"
+
+    # No extension - check for additional patterns
+
+    # Check for API patterns
+    if any(pattern in url_lower for pattern in ["api.", "api/", "rest.", "graphql", "webhook"]):
+        return "api"
+
+    # Check for image hosting patterns (no extension but likely images)
+    if (
+        any(
+            pattern in url_lower
+            for pattern in ["images.", "img.", "cdn.", "photo", "pic", "gallery"]
+        )
+        or "image" in url_lower
+    ):
+        return "image"
+
+    # Check if this looks like a valid URL (has domain structure)
+    if clean_url.startswith(("http://", "https://")):
+        # Valid URL without extension - likely HTML
+        return "html"
+
+    # Invalid or malformed input - not a valid URL or filename
+    if (
+        not clean_url.startswith(("http://", "https://"))
+        and not _is_valid_domain_format(clean_url)
+        and "/" not in clean_url
+        and "." not in clean_url
+    ):
+        return "other"
+
+    # Default to HTML for valid-looking pages without extensions
+    return "html"

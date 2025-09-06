@@ -365,6 +365,84 @@ class ReportFormatter:
 
         return json.dumps(output, indent=2)
 
+    def format_zenrows_url_patterns_report(
+        self, url_results: Dict[str, Any], top: int = None
+    ) -> str:
+        """Format zenrows URL pattern analysis results as CSV report.
+
+        Args:
+            url_results: Dictionary containing domain and file type analysis results
+            top: Optional limit for number of results to include
+
+        Returns:
+            CSV formatted report string with URL pattern statistics
+        """
+        self.logger.info("Formatting zenrows URL patterns report")
+
+        if not url_results:
+            return "Type,Name,Count,Top Error Categories\n"
+
+        # Header
+        header = "Type,Name,Count,Top Error Categories"
+        lines = [header]
+
+        # Process domains
+        domains = url_results.get("domains", {})
+        if domains:
+            domain_items = list(domains.items())
+            if top:
+                domain_items = domain_items[:top]
+
+            for domain, stats in domain_items:
+                count = stats.get("count", 0)
+                error_categories = stats.get("error_categories", {})
+
+                # Format top error categories
+                category_parts = []
+                for category, cat_count in sorted(
+                    error_categories.items(), key=lambda x: x[1], reverse=True
+                ):
+                    category_parts.append(f"{category}({cat_count})")
+
+                categories_str = ";".join(category_parts) if category_parts else ""
+                lines.append(f'domain,{domain},{count},"{categories_str}"')
+
+        # Process file types
+        file_types = url_results.get("file_types", {})
+        if file_types:
+            file_type_items = list(file_types.items())
+            if top:
+                file_type_items = file_type_items[:top]
+
+            for file_type, stats in file_type_items:
+                count = stats.get("count", 0)
+                error_categories = stats.get("error_categories", {})
+
+                # Format top error categories
+                category_parts = []
+                for category, cat_count in sorted(
+                    error_categories.items(), key=lambda x: x[1], reverse=True
+                ):
+                    category_parts.append(f"{category}({cat_count})")
+
+                categories_str = ";".join(category_parts) if category_parts else ""
+                lines.append(f'file_type,{file_type},{count},"{categories_str}"')
+
+        # Add summary statistics as comments (CSV-safe format)
+        total_analyzed = url_results.get("total_analyzed", 0)
+        traces_without_urls = url_results.get("traces_without_urls", 0)
+
+        if total_analyzed > 0:
+            lines.append(
+                f"# Summary: {total_analyzed} errors analyzed, {traces_without_urls} without URLs"
+            )
+
+        result = "\n".join(lines) + "\n"
+        self.logger.info(
+            f"Formatted URL patterns report with {len(domains)} domains and {len(file_types)} file types"
+        )
+        return result
+
     def format_zenrows_detail_rich(self, hierarchy: Dict[str, Dict[str, Any]]) -> str:
         """Format zenrows detail hierarchy using Rich for terminal display.
 
