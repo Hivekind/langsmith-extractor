@@ -349,6 +349,7 @@ def generate_zenrows_url_patterns_report(
             all_file_types = {}
             total_analyzed = 0
             traces_without_urls = 0
+            total_zenrows_traces = 0
 
             # Use progress bar for multi-project analysis
             if verbose:
@@ -402,6 +403,7 @@ def generate_zenrows_url_patterns_report(
                         # Update totals
                         total_analyzed += project_results.get("total_analyzed", 0)
                         traces_without_urls += project_results.get("traces_without_urls", 0)
+                        total_zenrows_traces += project_results.get("total_zenrows_traces", 0)
 
                         progress.advance(task)
             else:
@@ -442,6 +444,7 @@ def generate_zenrows_url_patterns_report(
 
                     total_analyzed += project_results.get("total_analyzed", 0)
                     traces_without_urls += project_results.get("traces_without_urls", 0)
+                    total_zenrows_traces += project_results.get("total_zenrows_traces", 0)
 
             # Sort by frequency (descending)
             all_domains = dict(
@@ -457,6 +460,7 @@ def generate_zenrows_url_patterns_report(
                 "file_types": all_file_types,
                 "total_analyzed": total_analyzed,
                 "traces_without_urls": traces_without_urls,
+                "total_zenrows_traces": total_zenrows_traces,
             }
 
             if verbose and url_results:

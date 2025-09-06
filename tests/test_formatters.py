@@ -235,6 +235,7 @@ class TestURLPatternFormatter:
             },
             "total_analyzed": 7,
             "traces_without_urls": 0,
+            "total_zenrows_traces": 10,
         }
 
         result = self.formatter.format_zenrows_url_patterns_report(url_results)
@@ -252,7 +253,7 @@ class TestURLPatternFormatter:
         assert 'file_type,html,3,"http_404_not_found(2);http_422_unprocessable(1)"' in result
 
         # Check summary
-        assert "# Summary: 7 errors analyzed, 0 without URLs" in result
+        assert "# Summary: 7 errors analyzed from 10 total ZenRows traces, 0 without URLs" in result
 
     def test_format_zenrows_url_patterns_empty_data(self):
         """Test URL pattern formatting with empty data."""
@@ -275,6 +276,8 @@ class TestURLPatternFormatter:
             },
             "total_analyzed": 10,
             "traces_without_urls": 0,
+            "total_zenrows_traces": 12,
+            "total_zenrows_traces": 15,
         }
 
         # Test with top=2 limit
@@ -304,6 +307,7 @@ class TestURLPatternFormatter:
             },
             "total_analyzed": 15,
             "traces_without_urls": 0,
+            "total_zenrows_traces": 20,
         }
 
         result = self.formatter.format_zenrows_url_patterns_report(url_results)

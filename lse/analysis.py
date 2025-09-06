@@ -440,9 +440,14 @@ class TraceAnalyzer:
         file_type_stats = {}
         traces_without_urls = 0
         total_analyzed = 0
+        total_zenrows_traces = 0
 
         for date_key, date_traces in grouped_traces.items():
             for trace in date_traces:
+                # Count total zenrows traces (successful + failed)
+                zenrows_count = count_zenrows_traces(trace)
+                total_zenrows_traces += zenrows_count
+
                 # Extract zenrows errors to get URL data
                 errors = extract_zenrows_errors(trace, project_name)
 
@@ -499,14 +504,58 @@ class TraceAnalyzer:
             "file_types": sorted_file_types,
             "traces_without_urls": traces_without_urls,
             "total_analyzed": total_analyzed,
+            "total_zenrows_traces": total_zenrows_traces,
         }
 
         self.logger.info(
             f"URL pattern analysis completed: {len(sorted_domains)} domains, "
-            f"{len(sorted_file_types)} file types, {total_analyzed} total errors analyzed"
+            f"{len(sorted_file_types)} file types, {total_analyzed} total errors analyzed from {total_zenrows_traces} ZenRows traces"
         )
 
         return result
+
+
+def count_zenrows_traces(trace: Dict[str, Any]) -> int:
+    """Count total zenrows_scraper traces (both successful and failed).
+
+    Args:
+        trace: The trace data to analyze
+
+    Returns:
+        Total number of zenrows_scraper runs found
+    """
+    count = 0
+
+    # Check root trace
+    root_name = trace.get("name", "").lower()
+    if "zenrows_scraper" in root_name:
+        count += 1
+
+    # Check child runs recursively
+    def check_children(runs):
+        nonlocal count
+        if not runs:
+            return
+
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+
+            run_name = run.get("name", "").lower()
+            if "zenrows_scraper" in run_name:
+                count += 1
+
+            # Recurse into nested children
+            child_runs = run.get("child_runs", [])
+            if child_runs:
+                check_children(child_runs)
+
+    # Start recursion with top-level child runs
+    child_runs = trace.get("child_runs", [])
+    if child_runs:
+        check_children(child_runs)
+
+    return count
 
 
 def extract_crypto_symbol(trace: Dict[str, Any]) -> str:

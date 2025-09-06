@@ -431,10 +431,14 @@ class ReportFormatter:
         # Add summary statistics as comments (CSV-safe format)
         total_analyzed = url_results.get("total_analyzed", 0)
         traces_without_urls = url_results.get("traces_without_urls", 0)
+        total_zenrows_traces = url_results.get("total_zenrows_traces", 0)
 
-        if total_analyzed > 0:
+        # Debug logging
+        self.logger.debug(f"Formatter received: total_analyzed={total_analyzed}, total_zenrows_traces={total_zenrows_traces}, traces_without_urls={traces_without_urls}")
+
+        if total_analyzed > 0 or total_zenrows_traces > 0:
             lines.append(
-                f"# Summary: {total_analyzed} errors analyzed, {traces_without_urls} without URLs"
+                f"# Summary: {total_analyzed} errors analyzed from {total_zenrows_traces} total ZenRows traces, {traces_without_urls} without URLs"
             )
 
         result = "\n".join(lines) + "\n"
