@@ -190,3 +190,162 @@ class TestOutputIntegration:
         # Should not contain any console formatting or colors
         assert "\x1b[" not in output  # ANSI escape codes
         assert "[green]" not in output  # Rich markup
+
+
+class TestURLPatternFormatter:
+    """Test URL pattern analysis formatting functionality."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.formatter = ReportFormatter()
+
+    def test_format_zenrows_url_patterns_basic(self):
+        """Test basic URL pattern formatting."""
+        url_results = {
+            "domains": {
+                "example.com": {
+                    "count": 5,
+                    "error_categories": {
+                        "http_404_not_found": 3,
+                        "http_422_unprocessable": 2,
+                    },
+                },
+                "test.org": {
+                    "count": 2,
+                    "error_categories": {
+                        "read_timeout": 2,
+                    },
+                },
+            },
+            "file_types": {
+                "pdf": {
+                    "count": 4,
+                    "error_categories": {
+                        "http_413_too_large": 3,
+                        "http_404_not_found": 1,
+                    },
+                },
+                "html": {
+                    "count": 3,
+                    "error_categories": {
+                        "http_404_not_found": 2,
+                        "http_422_unprocessable": 1,
+                    },
+                },
+            },
+            "total_analyzed": 7,
+            "traces_without_urls": 0,
+        }
+
+        result = self.formatter.format_zenrows_url_patterns_report(url_results)
+        lines = result.strip().split("\n")
+
+        # Check header
+        assert lines[0] == "Type,Name,Count,Top Error Categories"
+
+        # Check domain entries (should be sorted by count descending)
+        assert 'domain,example.com,5,"http_404_not_found(3);http_422_unprocessable(2)"' in result
+        assert 'domain,test.org,2,"read_timeout(2)"' in result
+
+        # Check file type entries (should be sorted by count descending)
+        assert 'file_type,pdf,4,"http_413_too_large(3);http_404_not_found(1)"' in result
+        assert 'file_type,html,3,"http_404_not_found(2);http_422_unprocessable(1)"' in result
+
+        # Check summary
+        assert "# Summary: 7 errors analyzed, 0 without URLs" in result
+
+    def test_format_zenrows_url_patterns_empty_data(self):
+        """Test URL pattern formatting with empty data."""
+        result = self.formatter.format_zenrows_url_patterns_report({})
+        assert result == "Type,Name,Count,Top Error Categories\n"
+
+    def test_format_zenrows_url_patterns_top_limit(self):
+        """Test URL pattern formatting with top limit."""
+        url_results = {
+            "domains": {
+                "first.com": {"count": 5, "error_categories": {"error1": 5}},
+                "second.com": {"count": 4, "error_categories": {"error2": 4}},
+                "third.com": {"count": 3, "error_categories": {"error3": 3}},
+                "fourth.com": {"count": 2, "error_categories": {"error4": 2}},
+            },
+            "file_types": {
+                "pdf": {"count": 6, "error_categories": {"error_pdf": 6}},
+                "html": {"count": 5, "error_categories": {"error_html": 5}},
+                "image": {"count": 4, "error_categories": {"error_img": 4}},
+            },
+            "total_analyzed": 10,
+            "traces_without_urls": 0,
+        }
+
+        # Test with top=2 limit
+        result = self.formatter.format_zenrows_url_patterns_report(url_results, top=2)
+
+        # Should only show top 2 domains and top 2 file types
+        assert result.count("domain,") == 2  # Only 2 domain entries
+        assert result.count("file_type,") == 2  # Only 2 file type entries
+        assert "first.com" in result  # Top domain
+        assert "second.com" in result  # Second domain
+        assert "third.com" not in result  # Should be excluded
+        assert "pdf" in result  # Top file type
+        assert "html" in result  # Second file type
+
+    def test_format_zenrows_url_patterns_sorted_by_frequency(self):
+        """Test that formatter handles pre-sorted data correctly (analysis function sorts by frequency)."""
+        # Data comes pre-sorted from analysis function - simulate that here
+        url_results = {
+            "domains": {
+                "high.com": {"count": 10, "error_categories": {"error2": 10}},  # Highest first
+                "medium.com": {"count": 5, "error_categories": {"error3": 5}},  # Medium second
+                "low.com": {"count": 1, "error_categories": {"error1": 1}},  # Lowest last
+            },
+            "file_types": {
+                "common": {"count": 8, "error_categories": {"error2": 8}},  # Higher first
+                "rare": {"count": 2, "error_categories": {"error1": 2}},  # Lower second
+            },
+            "total_analyzed": 15,
+            "traces_without_urls": 0,
+        }
+
+        result = self.formatter.format_zenrows_url_patterns_report(url_results)
+        lines = result.strip().split("\n")
+
+        # Find domain lines and file type lines
+        domain_lines = [line for line in lines if line.startswith("domain,")]
+        file_type_lines = [line for line in lines if line.startswith("file_type,")]
+
+        # Domains should be in descending order by count
+        assert "high.com,10" in domain_lines[0]  # Highest count first
+        assert "medium.com,5" in domain_lines[1]  # Medium count second
+        assert "low.com,1" in domain_lines[2]  # Lowest count last
+
+        # File types should be in descending order by count
+        assert "common,8" in file_type_lines[0]  # Higher count first
+        assert "rare,2" in file_type_lines[1]  # Lower count second
+
+    def test_format_zenrows_url_patterns_error_categories_sorted(self):
+        """Test that error categories are sorted by frequency within each entry."""
+        url_results = {
+            "domains": {
+                "example.com": {
+                    "count": 10,
+                    "error_categories": {
+                        "rare_error": 1,
+                        "common_error": 7,
+                        "medium_error": 2,
+                    },
+                },
+            },
+            "file_types": {},
+            "total_analyzed": 10,
+            "traces_without_urls": 0,
+        }
+
+        result = self.formatter.format_zenrows_url_patterns_report(url_results)
+
+        # Error categories should be sorted by count (descending) within the entry
+        domain_line = [line for line in result.split("\n") if line.startswith("domain,")][0]
+        categories_part = domain_line.split('"')[1]  # Extract the quoted categories part
+
+        # Should be sorted: common_error(7), medium_error(2), rare_error(1)
+        expected_order = "common_error(7);medium_error(2);rare_error(1)"
+        assert categories_part == expected_order

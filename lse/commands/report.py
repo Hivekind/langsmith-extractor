@@ -337,7 +337,7 @@ def generate_zenrows_url_patterns_report(
             project_dirs = [d for d in data_dir.iterdir() if d.is_dir()]
             if not project_dirs:
                 logger.warning(f"No project directories found in {data_dir}")
-                return "Domain,Count,File Type,Error Categories\n"
+                return "Type,Name,Count,Top Error Categories\n"
 
             if verbose:
                 progress_console.print(

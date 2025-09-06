@@ -313,3 +313,277 @@ class TestEnhancedZenrowsErrorsCommand:
         # Both flags should be documented
         assert "--debug-unknown-errors" in result.stdout
         assert "--verbose" in result.stdout
+
+
+class TestZenrowsUrlPatternsCommand:
+    """Test the zenrows-url-patterns command for URL pattern analysis."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.runner = CliRunner()
+
+    def test_help_shows_command_options(self):
+        """Test that help text shows all command options and documentation."""
+        result = self.runner.invoke(app, ["report", "zenrows-url-patterns", "--help"])
+        assert result.exit_code == 0
+
+        # Check for required flags
+        assert "--date" in result.stdout
+        assert "--start-date" in result.stdout
+        assert "--end-date" in result.stdout
+        assert "--project" in result.stdout
+        assert "--top" in result.stdout
+        assert "--verbose" in result.stdout
+
+        # Check for command description
+        assert "Analyze URL patterns and domains" in result.stdout
+        assert "zenrows_scraper errors" in result.stdout
+
+    def test_command_requires_date_parameter(self):
+        """Test that command requires at least one date parameter."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(app, ["report", "zenrows-url-patterns"])
+            assert result.exit_code == 1
+            assert "At least one date parameter is required" in result.stderr
+
+    def test_single_date_flag_syntax(self):
+        """Test that --date flag is accepted syntactically."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app, ["report", "zenrows-url-patterns", "--date", "2025-08-29"]
+            )
+            # May exit with error due to missing data, but should accept syntax
+            # Either success (0) or data-related error (1) is acceptable
+            assert result.exit_code in [0, 1]
+
+    def test_date_range_flags_syntax(self):
+        """Test that --start-date and --end-date flags are accepted."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--start-date",
+                    "2025-08-01",
+                    "--end-date",
+                    "2025-08-31",
+                ],
+            )
+            # May exit with error due to missing data, but should accept syntax
+            assert result.exit_code in [0, 1]
+
+    def test_project_filter_syntax(self):
+        """Test that --project flag is accepted for filtering."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--project",
+                    "test-project",
+                    "--date",
+                    "2025-08-29",
+                ],
+            )
+            assert result.exit_code in [0, 1]
+
+    def test_top_flag_syntax(self):
+        """Test that --top flag is accepted for limiting results."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-url-patterns", "--date", "2025-08-29", "--top", "10"],
+            )
+            assert result.exit_code in [0, 1]
+
+    def test_verbose_flag_syntax(self):
+        """Test that --verbose flag is accepted."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app, ["report", "zenrows-url-patterns", "--date", "2025-08-29", "--verbose"]
+            )
+            assert result.exit_code in [0, 1]
+
+    def test_invalid_date_format_error(self):
+        """Test that invalid date formats show appropriate error."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app, ["report", "zenrows-url-patterns", "--date", "invalid-date"]
+            )
+            assert result.exit_code == 1
+
+    def test_mixed_date_parameters_error(self):
+        """Test that mixing single date with date range shows error."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--date",
+                    "2025-08-29",
+                    "--start-date",
+                    "2025-08-01",
+                ],
+            )
+            assert result.exit_code == 1
+            assert "Cannot use --date with --start-date" in result.stderr
+
+    def test_incomplete_date_range_error(self):
+        """Test that incomplete date range shows error."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            # Test missing end date
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-url-patterns", "--start-date", "2025-08-01"],
+            )
+            assert result.exit_code == 1
+            assert "End date is required when start date is provided" in result.stderr
+
+            # Test missing start date
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-url-patterns", "--end-date", "2025-08-31"],
+            )
+            assert result.exit_code == 1
+            assert "Start date is required when end date is provided" in result.stderr
+
+    def test_invalid_top_parameter_error(self):
+        """Test that invalid --top parameter shows error."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                ["report", "zenrows-url-patterns", "--date", "2025-08-29", "--top", "0"],
+            )
+            assert result.exit_code == 1
+            assert "--top must be a positive number" in result.stderr
+
+    def test_output_format_examples_in_help(self):
+        """Test that help shows output format documentation."""
+        result = self.runner.invoke(app, ["report", "zenrows-url-patterns", "--help"])
+        assert result.exit_code == 0
+
+        # Check for output format documentation
+        assert "Output Format" in result.stdout
+        assert "Type,Name,Count,Top Error Categories" in result.stdout
+
+    def test_usage_examples_in_help(self):
+        """Test that help shows usage examples."""
+        result = self.runner.invoke(app, ["report", "zenrows-url-patterns", "--help"])
+        assert result.exit_code == 0
+
+        # Check for usage examples section
+        assert "Examples:" in result.stdout
+        # The full examples might be truncated in test output, but key elements should be there
+        assert "Single day analysis" in result.stdout or "project --date" in result.stdout
+        # At minimum, the command description should mention examples
+        assert "Examples:" in result.stdout
+
+    @patch("lse.commands.report.generate_zenrows_url_patterns_report")
+    def test_function_called_with_correct_parameters_single_date(self, mock_generate):
+        """Test that report generation function is called with correct parameters for single date."""
+        mock_generate.return_value = "Type,Name,Count,Top Error Categories\n"
+
+        with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--project",
+                    "test-project",
+                    "--date",
+                    "2025-08-29",
+                    "--top",
+                    "10",
+                    "--verbose",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mock_generate.assert_called_once()
+
+            # Check function was called with correct parameters
+            call_kwargs = mock_generate.call_args[1]
+            assert call_kwargs["project_name"] == "test-project"
+            assert call_kwargs["top"] == 10
+            assert call_kwargs["verbose"] is True
+            assert call_kwargs["single_date"] is not None
+            # start_date and end_date should not be in kwargs for single date mode
+
+    @patch("lse.commands.report.generate_zenrows_url_patterns_report")
+    def test_function_called_with_correct_parameters_date_range(self, mock_generate):
+        """Test that report generation function is called with correct parameters for date range."""
+        mock_generate.return_value = "Type,Name,Count,Top Error Categories\n"
+
+        with patch.dict(os.environ, {"LANGSMITH_API_KEY": "test-key"}, clear=True):
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--start-date",
+                    "2025-08-01",
+                    "--end-date",
+                    "2025-08-31",
+                    "--top",
+                    "5",
+                ],
+            )
+
+            assert result.exit_code == 0
+            mock_generate.assert_called_once()
+
+            # Check function was called with correct parameters
+            call_kwargs = mock_generate.call_args[1]
+            assert call_kwargs["project_name"] is None  # No project specified
+            assert call_kwargs["top"] == 5
+            assert call_kwargs["verbose"] is False  # Default value
+            assert call_kwargs["start_date"] is not None
+            assert call_kwargs["end_date"] is not None
+            # single_date should not be in kwargs for date range mode
+
+    def test_empty_data_produces_valid_csv_header(self):
+        """Test that command produces valid CSV header even with no data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # Create empty data directory
+            data_dir = Path(temp_dir)
+
+            with patch.dict(os.environ, {"OUTPUT_DIR": str(data_dir)}, clear=True):
+                result = self.runner.invoke(
+                    app, ["report", "zenrows-url-patterns", "--date", "2025-08-29"]
+                )
+
+                assert result.exit_code == 0
+                assert "Type,Name,Count,Top Error Categories" in result.stdout
+
+    def test_flag_combinations_syntax(self):
+        """Test that various flag combinations are accepted syntactically."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            # Test all flags together
+            result = self.runner.invoke(
+                app,
+                [
+                    "report",
+                    "zenrows-url-patterns",
+                    "--project",
+                    "test-project",
+                    "--date",
+                    "2025-08-29",
+                    "--top",
+                    "20",
+                    "--verbose",
+                ],
+            )
+            assert result.exit_code in [0, 1]
+
+    def test_backward_compatibility_with_basic_usage(self):
+        """Test that command works with minimal required arguments."""
+        with patch.dict(os.environ, {"OUTPUT_DIR": "/tmp"}, clear=True):
+            result = self.runner.invoke(
+                app, ["report", "zenrows-url-patterns", "--date", "2025-08-29"]
+            )
+            # Should accept basic syntax even if no data exists
+            assert result.exit_code in [0, 1]
