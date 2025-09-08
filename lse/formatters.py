@@ -380,10 +380,10 @@ class ReportFormatter:
         self.logger.info("Formatting zenrows URL patterns report")
 
         if not url_results:
-            return "Type,Name,Count,Top Error Categories\n"
+            return "Type,Name,Count,Top Error Categories,Sample URLs\n"
 
         # Header
-        header = "Type,Name,Count,Top Error Categories"
+        header = "Type,Name,Count,Top Error Categories,Sample URLs"
         lines = [header]
 
         # Process domains
@@ -396,6 +396,7 @@ class ReportFormatter:
             for domain, stats in domain_items:
                 count = stats.get("count", 0)
                 error_categories = stats.get("error_categories", {})
+                sample_urls = stats.get("sample_urls", [])
 
                 # Format top error categories
                 category_parts = []
@@ -405,7 +406,11 @@ class ReportFormatter:
                     category_parts.append(f"{category}({cat_count})")
 
                 categories_str = ";".join(category_parts) if category_parts else ""
-                lines.append(f'domain,{domain},{count},"{categories_str}"')
+
+                # Format sample URLs (limit to first 3 for readability)
+                sample_urls_str = ";".join(sample_urls[:3]) if sample_urls else ""
+
+                lines.append(f'domain,{domain},{count},"{categories_str}","{sample_urls_str}"')
 
         # Process file types
         file_types = url_results.get("file_types", {})
@@ -426,7 +431,7 @@ class ReportFormatter:
                     category_parts.append(f"{category}({cat_count})")
 
                 categories_str = ";".join(category_parts) if category_parts else ""
-                lines.append(f'file_type,{file_type},{count},"{categories_str}"')
+                lines.append(f'file_type,{file_type},{count},"{categories_str}",""')
 
         # Add summary statistics as comments (CSV-safe format)
         total_analyzed = url_results.get("total_analyzed", 0)
@@ -434,7 +439,9 @@ class ReportFormatter:
         total_zenrows_traces = url_results.get("total_zenrows_traces", 0)
 
         # Debug logging
-        self.logger.debug(f"Formatter received: total_analyzed={total_analyzed}, total_zenrows_traces={total_zenrows_traces}, traces_without_urls={traces_without_urls}")
+        self.logger.debug(
+            f"Formatter received: total_analyzed={total_analyzed}, total_zenrows_traces={total_zenrows_traces}, traces_without_urls={traces_without_urls}"
+        )
 
         if total_analyzed > 0 or total_zenrows_traces > 0:
             lines.append(

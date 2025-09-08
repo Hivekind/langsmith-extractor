@@ -379,7 +379,11 @@ def generate_zenrows_url_patterns_report(
                         # Merge domain results
                         for domain, stats in project_results.get("domains", {}).items():
                             if domain not in all_domains:
-                                all_domains[domain] = {"count": 0, "error_categories": {}}
+                                all_domains[domain] = {
+                                    "count": 0,
+                                    "error_categories": {},
+                                    "sample_urls": [],
+                                }
                             all_domains[domain]["count"] += stats["count"]
 
                             # Merge error categories
@@ -387,6 +391,14 @@ def generate_zenrows_url_patterns_report(
                                 if category not in all_domains[domain]["error_categories"]:
                                     all_domains[domain]["error_categories"][category] = 0
                                 all_domains[domain]["error_categories"][category] += count
+
+                            # Merge sample URLs (limit to avoid memory bloat)
+                            existing_urls = set(all_domains[domain]["sample_urls"])
+                            new_urls = stats.get("sample_urls", [])
+                            for url in new_urls:
+                                if len(existing_urls) < 10:  # Same limit as in analysis
+                                    existing_urls.add(url)
+                            all_domains[domain]["sample_urls"] = list(existing_urls)
 
                         # Merge file type results
                         for file_type, stats in project_results.get("file_types", {}).items():
@@ -424,13 +436,25 @@ def generate_zenrows_url_patterns_report(
                     # Merge results (same logic as verbose mode)
                     for domain, stats in project_results.get("domains", {}).items():
                         if domain not in all_domains:
-                            all_domains[domain] = {"count": 0, "error_categories": {}}
+                            all_domains[domain] = {
+                                "count": 0,
+                                "error_categories": {},
+                                "sample_urls": [],
+                            }
                         all_domains[domain]["count"] += stats["count"]
 
                         for category, count in stats.get("error_categories", {}).items():
                             if category not in all_domains[domain]["error_categories"]:
                                 all_domains[domain]["error_categories"][category] = 0
                             all_domains[domain]["error_categories"][category] += count
+
+                        # Merge sample URLs (limit to avoid memory bloat)
+                        existing_urls = set(all_domains[domain]["sample_urls"])
+                        new_urls = stats.get("sample_urls", [])
+                        for url in new_urls:
+                            if len(existing_urls) < 10:  # Same limit as in analysis
+                                existing_urls.add(url)
+                        all_domains[domain]["sample_urls"] = list(existing_urls)
 
                     for file_type, stats in project_results.get("file_types", {}).items():
                         if file_type not in all_file_types:

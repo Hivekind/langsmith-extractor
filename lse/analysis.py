@@ -466,12 +466,25 @@ class TraceAnalyzer:
                     # Get error category for this error
                     error_category = error.get("category", "unknown_errors")
 
-                    # Update domain statistics
+                    # Update domain statistics with full URL information
                     if domain:
                         if domain not in domain_stats:
-                            domain_stats[domain] = {"count": 0, "error_categories": {}}
+                            domain_stats[domain] = {
+                                "count": 0,
+                                "error_categories": {},
+                                "sample_urls": set(),
+                            }
 
                         domain_stats[domain]["count"] += 1
+
+                        # Track sample URLs for this domain (limit to avoid memory bloat)
+                        if len(domain_stats[domain]["sample_urls"]) < 10:
+                            domain_stats[domain]["sample_urls"].add(target_url)
+                            # Debug logging
+                            if (
+                                domain_stats[domain]["count"] <= 2
+                            ):  # Only log first few for debugging
+                                self.logger.debug(f"Added URL to {domain}: {target_url}")
 
                         # Track error categories for this domain
                         if error_category not in domain_stats[domain]["error_categories"]:
@@ -491,6 +504,17 @@ class TraceAnalyzer:
                         file_type_stats[file_type]["error_categories"][error_category] += 1
 
         # Sort domains and file types by frequency (descending)
+        # Also convert sets to lists for JSON serialization
+        for domain, domain_data in domain_stats.items():
+            if "sample_urls" in domain_data:
+                urls_before = len(domain_data["sample_urls"])
+                domain_data["sample_urls"] = list(domain_data["sample_urls"])
+                urls_after = len(domain_data["sample_urls"])
+                if urls_after > 0:  # Only log domains that have URLs
+                    self.logger.debug(
+                        f"Domain {domain}: converted {urls_before} URLs to list, result: {urls_after} URLs: {domain_data['sample_urls'][:2]}"
+                    )
+
         sorted_domains = dict(
             sorted(domain_stats.items(), key=lambda x: x[1]["count"], reverse=True)
         )

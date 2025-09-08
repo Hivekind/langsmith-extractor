@@ -276,7 +276,6 @@ class TestURLPatternFormatter:
             },
             "total_analyzed": 10,
             "traces_without_urls": 0,
-            "total_zenrows_traces": 12,
             "total_zenrows_traces": 15,
         }
 
