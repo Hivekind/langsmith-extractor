@@ -41,35 +41,6 @@ class TestRealDataIntegration:
             data_line = lines[1]
             assert "2025-08-29" in data_line
 
-    def test_report_with_real_trace_data_date_range(self):
-        """Test report command with real trace data for date range."""
-        if not self.data_dir.exists():
-            pytest.skip("No data directory found for integration testing")
-
-        with patch.dict(os.environ, {}, clear=True):
-            result = self.runner.invoke(
-                app,
-                [
-                    "report",
-                    "zenrows-errors",
-                    "--start-date",
-                    "2025-08-25",
-                    "--end-date",
-                    "2025-08-29",
-                ],
-            )
-
-        assert result.exit_code == 0
-        assert "Date,Total Traces,Zenrows Errors,Error Rate" in result.stdout
-
-        lines = result.stdout.strip().split("\n")
-        assert len(lines) >= 1  # At least header
-
-        # Dates should be sorted if data exists
-        if len(lines) > 2:
-            dates = [line.split(",")[0] for line in lines[1:]]
-            assert dates == sorted(dates)
-
     def test_report_output_format_matches_spec(self):
         """Test that output format exactly matches specification."""
         if not self.data_dir.exists():
@@ -153,7 +124,7 @@ class TestPerformanceAndScalability:
 
         self.runner.invoke(
             app,
-            ["report", "zenrows-errors", "--start-date", "2025-01-01", "--end-date", "2025-12-31"],
+            ["report", "zenrows-errors", "--date", "2025-08-29"],
         )
 
         # If we get here without timeout, performance is acceptable
@@ -172,10 +143,8 @@ class TestPerformanceAndScalability:
                 [
                     "report",
                     "zenrows-errors",
-                    "--start-date",
-                    "2025-08-01",
-                    "--end-date",
-                    "2025-08-31",
+                    "--date",
+                    "2025-08-29",
                 ],
             )
 
@@ -213,10 +182,8 @@ class TestErrorHandlingWithRealData:
                 [
                     "report",
                     "zenrows-errors",
-                    "--start-date",
-                    "2025-08-01",
-                    "--end-date",
-                    "2025-08-31",
+                    "--date",
+                    "2025-08-29",
                 ],
             )
 
@@ -263,5 +230,7 @@ class TestCommandLineIntegration:
         assert "zenrows_scraper" in result.stdout
         assert "Examples:" in result.stdout
         assert "--date" in result.stdout
-        assert "--start-date" in result.stdout
-        assert "--end-date" in result.stdout
+        assert "--project" in result.stdout
+        # Should not contain removed parameters
+        assert "--start-date" not in result.stdout
+        assert "--end-date" not in result.stdout

@@ -41,27 +41,6 @@ class TestTraceFileDiscovery:
             assert all(f.name.endswith(".json") for f in files)
             assert all(not f.name.startswith("_") for f in files)
 
-    def test_find_trace_files_date_range(self):
-        """Test finding trace files across a date range."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            base_path = Path(temp_dir)
-
-            # Create test directory structure for multiple dates
-            project_dir = base_path / "test-project"
-            for day in [28, 29, 30]:
-                date_dir = project_dir / f"2025-08-{day:02d}"
-                date_dir.mkdir(parents=True)
-                (date_dir / f"trace_{day}_123456.json").touch()
-
-            files = find_trace_files(
-                base_path,
-                "test-project",
-                start_date=datetime(2025, 8, 28),
-                end_date=datetime(2025, 8, 30),
-            )
-
-            assert len(files) == 3
-
     def test_find_trace_files_missing_directory(self):
         """Test handling of missing project directory."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -72,11 +51,11 @@ class TestTraceFileDiscovery:
             assert files == []
 
     def test_find_trace_files_requires_date_parameter(self):
-        """Test that at least one date parameter is required."""
+        """Test that date parameter is required."""
         with tempfile.TemporaryDirectory() as temp_dir:
             base_path = Path(temp_dir)
 
-            with pytest.raises(ValidationError, match="At least one date parameter"):
+            with pytest.raises(ValidationError, match="Date parameter is required"):
                 find_trace_files(base_path, "test-project")
 
 
@@ -447,73 +426,6 @@ class TestTraceAnalyzer:
             assert result["2025-08-29"]["total_traces"] == 1
             assert result["2025-08-29"]["zenrows_errors"] == 1
             assert result["2025-08-29"]["error_rate"] == 100.0
-
-    def test_analyzer_processes_date_range(self):
-        """Test analyzer processing traces across date range."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            base_path = Path(temp_dir)
-
-            # Create test data for multiple dates
-            project_dir = base_path / "test-project"
-
-            # Day 1: 2 traces, 1 error
-            day1_dir = project_dir / "2025-08-28"
-            day1_dir.mkdir(parents=True)
-
-            trace1_data = {
-                "metadata": {"project_name": "test-project", "run_id": "trace1"},
-                "trace": {
-                    "id": "trace1",
-                    "start_time": "2025-08-28 10:00:00",
-                    "child_runs": [{"name": "zenrows_scraper", "status": "error"}],
-                },
-            }
-            trace2_data = {
-                "metadata": {"project_name": "test-project", "run_id": "trace2"},
-                "trace": {
-                    "id": "trace2",
-                    "start_time": "2025-08-28 11:00:00",
-                    "child_runs": [{"name": "zenrows_scraper", "status": "success"}],
-                },
-            }
-
-            with open(day1_dir / "trace1.json", "w") as f:
-                json.dump(trace1_data, f)
-            with open(day1_dir / "trace2.json", "w") as f:
-                json.dump(trace2_data, f)
-
-            # Day 2: 1 trace, 0 errors
-            day2_dir = project_dir / "2025-08-29"
-            day2_dir.mkdir(parents=True)
-
-            trace3_data = {
-                "metadata": {"project_name": "test-project", "run_id": "trace3"},
-                "trace": {
-                    "id": "trace3",
-                    "start_time": "2025-08-29 09:00:00",
-                    "child_runs": [{"name": "other_tool", "status": "success"}],
-                },
-            }
-
-            with open(day2_dir / "trace3.json", "w") as f:
-                json.dump(trace3_data, f)
-
-            # Analyze the date range
-            result = self.analyzer.analyze_zenrows_errors(
-                data_dir=base_path,
-                project_name="test-project",
-                start_date=datetime(2025, 8, 28),
-                end_date=datetime(2025, 8, 29),
-            )
-
-            assert len(result) == 2
-            assert result["2025-08-28"]["total_traces"] == 2
-            assert result["2025-08-28"]["zenrows_errors"] == 1
-            assert result["2025-08-28"]["error_rate"] == 50.0
-
-            assert result["2025-08-29"]["total_traces"] == 1
-            assert result["2025-08-29"]["zenrows_errors"] == 0
-            assert result["2025-08-29"]["error_rate"] == 0.0
 
     def test_analyzer_handles_large_trace_files(self):
         """Test that analyzer can handle large trace files efficiently."""

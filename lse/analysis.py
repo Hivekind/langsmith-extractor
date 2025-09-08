@@ -15,26 +15,22 @@ def find_trace_files(
     data_dir: Path,
     project_name: str,
     single_date: Optional[datetime] = None,
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
 ) -> List[Path]:
-    """Find trace files for the specified date(s).
+    """Find trace files for the specified date.
 
     Args:
         data_dir: Base directory containing trace data
         project_name: Name of the project to search in
-        single_date: Single date to search for (optional)
-        start_date: Start of date range (optional)
-        end_date: End of date range (optional)
+        single_date: Single date to search for (required)
 
     Returns:
         List of trace file paths
 
     Raises:
-        ValidationError: If no date parameters provided
+        ValidationError: If no date parameter provided
     """
-    if not single_date and not (start_date or end_date):
-        raise ValidationError("At least one date parameter is required")
+    if not single_date:
+        raise ValidationError("Date parameter is required")
 
     project_dir = data_dir / project_name
     if not project_dir.exists():
@@ -43,33 +39,15 @@ def find_trace_files(
 
     trace_files = []
 
-    if single_date:
-        # Single date mode - only look in the specific date directory
-        date_str = single_date.strftime("%Y-%m-%d")
-        date_dir = project_dir / date_str
-        if date_dir.exists():
-            for trace_file in date_dir.glob("*.json"):
-                if not trace_file.name.startswith("_"):  # Skip summary files
-                    trace_files.append(trace_file)
-        else:
-            logger.warning(f"No data found for date {date_str} in project {project_name}")
+    # Single date mode - only look in the specific date directory
+    date_str = single_date.strftime("%Y-%m-%d")
+    date_dir = project_dir / date_str
+    if date_dir.exists():
+        for trace_file in date_dir.glob("*.json"):
+            if not trace_file.name.startswith("_"):  # Skip summary files
+                trace_files.append(trace_file)
     else:
-        # Date range mode
-        current_date = start_date or end_date
-        end_search_date = end_date or start_date
-
-        while current_date <= end_search_date:
-            date_str = current_date.strftime("%Y-%m-%d")
-            date_dir = project_dir / date_str
-            if date_dir.exists():
-                for trace_file in date_dir.glob("*.json"):
-                    if not trace_file.name.startswith("_"):
-                        trace_files.append(trace_file)
-
-            # Move to next day
-            from datetime import timedelta
-
-            current_date += timedelta(days=1)
+        logger.warning(f"No data found for date {date_str} in project {project_name}")
 
     logger.info(f"Found {len(trace_files)} trace files for analysis")
     return trace_files
@@ -255,17 +233,13 @@ class TraceAnalyzer:
         data_dir: Path,
         project_name: str,
         single_date: Optional[datetime] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
     ) -> Dict[str, Dict[str, Union[int, float]]]:
         """Analyze zenrows_scraper errors in trace data.
 
         Args:
             data_dir: Base directory containing trace data
             project_name: Name of the project to analyze
-            single_date: Single date to analyze (optional)
-            start_date: Start of date range (optional)
-            end_date: End of date range (optional)
+            single_date: Single date to analyze (required)
 
         Returns:
             Dictionary with daily error statistics
@@ -277,8 +251,6 @@ class TraceAnalyzer:
             data_dir=data_dir,
             project_name=project_name,
             single_date=single_date,
-            start_date=start_date,
-            end_date=end_date,
         )
 
         if not trace_files:
@@ -303,10 +275,6 @@ class TraceAnalyzer:
         if single_date:
             requested_date = single_date.strftime("%Y-%m-%d")
             grouped_traces = {k: v for k, v in grouped_traces.items() if k == requested_date}
-        elif start_date or end_date:
-            start_str = start_date.strftime("%Y-%m-%d") if start_date else "0000-00-00"
-            end_str = end_date.strftime("%Y-%m-%d") if end_date else "9999-12-31"
-            grouped_traces = {k: v for k, v in grouped_traces.items() if start_str <= k <= end_str}
 
         # Analyze each day
         daily_data = {}

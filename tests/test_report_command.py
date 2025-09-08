@@ -54,25 +54,41 @@ class TestReportCommandParameters:
             # Should not fail due to parameter parsing
             assert "--date" not in result.stdout or result.exit_code == 0
 
-    def test_zenrows_errors_accepts_date_range_parameters(self):
-        """Test that --start-date and --end-date parameters are accepted."""
-        with patch("lse.commands.report.generate_zenrows_report") as mock_report:
-            mock_report.return_value = None
+    def test_zenrows_errors_rejects_start_date_parameter(self):
+        """Test that --start-date parameter is rejected with clear error."""
+        result = self.runner.invoke(
+            app,
+            [
+                "report",
+                "zenrows-errors",
+                "--start-date",
+                "2025-08-01",
+            ],
+        )
 
-            result = self.runner.invoke(
-                app,
-                [
-                    "report",
-                    "zenrows-errors",
-                    "--start-date",
-                    "2025-08-01",
-                    "--end-date",
-                    "2025-08-31",
-                ],
-            )
+        # Should fail with parameter parsing error
+        assert result.exit_code != 0
+        # Typer sends error messages to output
+        output = result.stdout + result.stderr
+        assert "start-date" in output or "No such option" in output
 
-            # Should not fail due to parameter parsing
-            assert result.exit_code == 0 or "start-date" not in result.stdout
+    def test_zenrows_errors_rejects_end_date_parameter(self):
+        """Test that --end-date parameter is rejected with clear error."""
+        result = self.runner.invoke(
+            app,
+            [
+                "report",
+                "zenrows-errors",
+                "--end-date",
+                "2025-08-31",
+            ],
+        )
+
+        # Should fail with parameter parsing error
+        assert result.exit_code != 0
+        # Typer sends error messages to output
+        output = result.stdout + result.stderr
+        assert "end-date" in output or "No such option" in output
 
     def test_zenrows_errors_shows_help_text(self):
         """Test that help text is comprehensive and useful."""
@@ -177,33 +193,15 @@ class TestZenrowsDetailCommand:
         # Check for description
         assert "hierarchical" in result.stdout.lower() or "detail" in result.stdout.lower()
 
-    def test_validates_date_range_order(self):
-        """Test that start date must be before end date."""
-        with patch("lse.commands.report.generate_zenrows_report"):
-            result = self.runner.invoke(
-                app,
-                [
-                    "report",
-                    "zenrows-errors",
-                    "--start-date",
-                    "2025-08-31",
-                    "--end-date",
-                    "2025-08-01",
-                ],
-            )
+    def test_requires_date_parameter(self):
+        """Test that --date parameter is required."""
+        result = self.runner.invoke(app, ["report", "zenrows-errors"])
 
-            # Should either succeed (if validation happens later) or fail with helpful message
-            if result.exit_code != 0:
-                assert "date" in result.stderr.lower() or "range" in result.stderr.lower()
-
-    def test_requires_at_least_one_date_parameter(self):
-        """Test that at least one date parameter is required."""
-        with patch("lse.commands.report.generate_zenrows_report"):
-            result = self.runner.invoke(app, ["report", "zenrows-errors"])
-
-            # Should require at least one date parameter
-            if result.exit_code != 0:
-                assert "date" in result.stderr.lower() or "required" in result.stderr.lower()
+        # Should require the --date parameter
+        assert result.exit_code != 0
+        # Typer sends error messages to output
+        output = (result.stdout + result.stderr).lower()
+        assert "missing option" in output or "required" in output
 
     def test_accepts_valid_single_date(self):
         """Test that valid single date is accepted."""
@@ -213,26 +211,6 @@ class TestZenrowsDetailCommand:
             result = self.runner.invoke(app, ["report", "zenrows-errors", "--date", "2025-08-29"])
 
             # Should succeed with valid date
-            assert result.exit_code == 0
-
-    def test_accepts_valid_date_range(self):
-        """Test that valid date range is accepted."""
-        with patch("lse.commands.report.generate_zenrows_report") as mock_report:
-            mock_report.return_value = "Date,Total Traces,Zenrows Errors,Error Rate\n"
-
-            result = self.runner.invoke(
-                app,
-                [
-                    "report",
-                    "zenrows-errors",
-                    "--start-date",
-                    "2025-08-01",
-                    "--end-date",
-                    "2025-08-31",
-                ],
-            )
-
-            # Should succeed with valid date range
             assert result.exit_code == 0
 
 
