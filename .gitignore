@@ -19,6 +19,7 @@ archives/
 
 # Environment files
 .env
+.envrc
 
 # Google Drive credentials and tokens
 credentials.json
