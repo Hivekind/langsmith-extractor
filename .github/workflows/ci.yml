@@ -40,6 +40,9 @@ jobs:
         
     - name: Run test suite
       run: uv run pytest -v --tb=short
+      env:
+        NO_COLOR: 1
+        TERM: dumb
       
     - name: Test CLI functionality
       run: |
