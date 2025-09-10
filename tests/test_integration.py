@@ -71,6 +71,7 @@ class TestRealDataIntegration:
         if len(lines) > 2:
             dates = [line.split(",")[0] for line in lines[1:]]
             assert dates == sorted(dates)
+
     def test_report_output_format_matches_spec(self):
         """Test that output format matches enhanced specification with categories."""
         if not self.data_dir.exists():
@@ -276,6 +277,7 @@ class TestCommandLineIntegration:
         assert "Examples:" in result.stdout
         assert "--date" in result.stdout
         assert "--project" in result.stdout
-        # Should not contain removed parameters
-        assert "--start-date" not in result.stdout
-        assert "--end-date" not in result.stdout
+        # Should contain new date range parameters
+        assert "--start-date" in result.stdout
+        assert "--end-date" in result.stdout
+        assert "--verbose" in result.stdout

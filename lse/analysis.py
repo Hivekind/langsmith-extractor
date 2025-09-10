@@ -17,13 +17,17 @@ def find_trace_files(
     data_dir: Path,
     project_name: str,
     single_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ) -> List[Path]:
-    """Find trace files for the specified date.
+    """Find trace files for the specified date or date range.
 
     Args:
         data_dir: Base directory containing trace data
         project_name: Name of the project to search in
-        single_date: Single date to search for (required)
+        single_date: Single date to search for (optional)
+        start_date: Start of date range (optional)
+        end_date: End of date range (optional)
 
     Returns:
         List of trace file paths
@@ -31,7 +35,7 @@ def find_trace_files(
     Raises:
         ValidationError: If no date parameter provided
     """
-    if not single_date:
+    if not single_date and not start_date and not end_date:
         raise ValidationError("Date parameter is required")
 
     project_dir = data_dir / project_name
@@ -41,15 +45,29 @@ def find_trace_files(
 
     trace_files = []
 
-    # Single date mode - only look in the specific date directory
-    date_str = single_date.strftime("%Y-%m-%d")
-    date_dir = project_dir / date_str
-    if date_dir.exists():
-        for trace_file in date_dir.glob("*.json"):
-            if not trace_file.name.startswith("_"):  # Skip summary files
-                trace_files.append(trace_file)
+    if single_date:
+        # Single date mode - only look in the specific date directory
+        date_str = single_date.strftime("%Y-%m-%d")
+        date_dir = project_dir / date_str
+        if date_dir.exists():
+            for trace_file in date_dir.glob("*.json"):
+                if not trace_file.name.startswith("_"):  # Skip summary files
+                    trace_files.append(trace_file)
+        else:
+            logger.warning(f"No data found for date {date_str} in project {project_name}")
     else:
-        logger.warning(f"No data found for date {date_str} in project {project_name}")
+        # Date range mode - look in all directories within range
+        start_str = start_date.strftime("%Y-%m-%d") if start_date else "0000-00-00"
+        end_str = end_date.strftime("%Y-%m-%d") if end_date else "9999-12-31"
+
+        for date_dir in project_dir.iterdir():
+            if date_dir.is_dir():
+                date_str = date_dir.name
+                # Check if this date is within our range
+                if start_str <= date_str <= end_str:
+                    for trace_file in date_dir.glob("*.json"):
+                        if not trace_file.name.startswith("_"):  # Skip summary files
+                            trace_files.append(trace_file)
 
     logger.info(f"Found {len(trace_files)} trace files for analysis")
     return trace_files
@@ -293,13 +311,17 @@ class TraceAnalyzer:
         data_dir: Path,
         project_name: str,
         single_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> Dict[str, Dict[str, Union[int, float]]]:
         """Analyze zenrows_scraper errors in trace data.
 
         Args:
             data_dir: Base directory containing trace data
             project_name: Name of the project to analyze
-            single_date: Single date to analyze (required)
+            single_date: Single date to analyze (optional)
+            start_date: Start of date range (optional)
+            end_date: End of date range (optional)
 
         Returns:
             Dictionary with daily error statistics
@@ -311,6 +333,8 @@ class TraceAnalyzer:
             data_dir=data_dir,
             project_name=project_name,
             single_date=single_date,
+            start_date=start_date,
+            end_date=end_date,
         )
 
         if not trace_files:

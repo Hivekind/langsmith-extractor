@@ -656,6 +656,26 @@ def zenrows_errors_command(
     """
     logger.info("Starting zenrows error report generation")
 
+    try:
+        # Validate that at least one date parameter is provided
+        if not date and not (start_date or end_date):
+            raise ValidationError(
+                "At least one date parameter is required. "
+                "Use --date for single day or --start-date/--end-date for range."
+            )
+
+        # Validate that single date and date range are not mixed
+        if date and (start_date or end_date):
+            raise ValidationError(
+                "Cannot use --date with --start-date/--end-date. "
+                "Use either single date OR date range parameters."
+            )
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
     # Enable unknown error logging if debug flag is set
     if debug_unknown_errors:
         logger.info(

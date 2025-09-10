@@ -493,6 +493,7 @@ class TestTraceAnalyzer:
             assert result["2025-08-29"]["total_traces"] == 1
             assert result["2025-08-29"]["zenrows_errors"] == 0
             assert result["2025-08-29"]["error_rate"] == 0.0
+
     def test_analyzer_handles_large_trace_files(self):
         """Test that analyzer can handle large trace files efficiently."""
         # This is a placeholder test for memory efficiency

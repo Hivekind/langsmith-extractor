@@ -242,7 +242,7 @@ class TestURLPatternFormatter:
         lines = result.strip().split("\n")
 
         # Check header
-        assert lines[0] == "Type,Name,Count,Top Error Categories"
+        assert lines[0] == "Type,Name,Count,Top Error Categories,Sample URLs"
 
         # Check domain entries (should be sorted by count descending)
         assert 'domain,example.com,5,"http_404_not_found(3);http_422_unprocessable(2)"' in result
@@ -258,7 +258,7 @@ class TestURLPatternFormatter:
     def test_format_zenrows_url_patterns_empty_data(self):
         """Test URL pattern formatting with empty data."""
         result = self.formatter.format_zenrows_url_patterns_report({})
-        assert result == "Type,Name,Count,Top Error Categories\n"
+        assert result == "Type,Name,Count,Top Error Categories,Sample URLs\n"
 
     def test_format_zenrows_url_patterns_top_limit(self):
         """Test URL pattern formatting with top limit."""
