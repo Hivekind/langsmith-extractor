@@ -93,8 +93,12 @@ Here's how to run through a complete trace archival sequence:
 # First, fetch all traces including child runs
 uv run lse archive fetch --project my-project --date 2024-01-15 --include-children
 
-# 2. Generate a report from archived data
+# 2. Generate reports from archived data
+# Analyze error rates and trends
 uv run lse report zenrows-errors --project my-project --date 2024-01-15
+
+# Analyze problematic URL patterns and domains  
+uv run lse report zenrows-url-patterns --project my-project --date 2024-01-15
 
 # 3. Continue with archiving
 
@@ -111,12 +115,55 @@ uv run lse archive --project my-project --date 2024-01-15 --include-children
 uv run lse archive restore --project my-project --date 2024-01-15
 ```
 
+## Analysis Features
+
+### URL Pattern Analysis
+
+The `zenrows-url-patterns` command analyzes ZenRows scraper errors to identify problematic URL patterns, domains, and file types. This helps teams understand which targets need special handling or configuration.
+
+**Key Insights:**
+- **Domain Analysis**: Which domains cause the most scraping errors
+- **File Type Analysis**: Error patterns by content type (PDFs, images, APIs, HTML pages)
+- **Error Categorization**: Top error types for each domain and file type
+- **Frequency Ranking**: Results sorted by error count (most problematic first)
+
+**Usage Examples:**
+
+```bash
+# Single day analysis for specific project
+uv run lse report zenrows-url-patterns --project my-project --date 2025-08-29
+
+# Date range analysis with top 20 results
+uv run lse report zenrows-url-patterns --start-date 2025-08-01 --end-date 2025-08-31 --top 20
+
+# All projects with detailed progress output
+uv run lse report zenrows-url-patterns --date 2025-08-29 --verbose --top 10
+```
+
+**Sample Output:**
+```csv
+Type,Name,Count,Top Error Categories
+domain,example.com,45,"http_404_not_found(30);http_422_unprocessable(15)"
+domain,problem-site.io,32,"http_413_too_large(20);read_timeout(12)"
+file_type,pdf,28,"http_413_too_large(18);http_422_unprocessable(10)"
+file_type,html,15,"http_404_not_found(12);http_403_forbidden(3)"
+# Summary: 87 errors analyzed, 3 without URLs
+```
+
+This analysis helps teams:
+- **Prioritize fixes** for the most problematic domains
+- **Configure specialized handling** for different file types  
+- **Understand error patterns** to improve scraping success rates
+- **Track improvements** over time by comparing reports
+
 ## Command Reference
 
 ### Core Commands
 
 - `lse report` - Generate analysis reports from stored traces
-  - Subcommands: `zenrows-errors` (analyze zenrows scraper failures)
+  - Subcommands: 
+    - `zenrows-errors` (analyze zenrows scraper failures)
+    - `zenrows-url-patterns` (analyze URL patterns and domains from zenrows errors)
   - Options: `--project`, `--date`, `--start-date`, `--end-date`
 
 - `lse archive` - Archive trace data to Google Drive
@@ -130,6 +177,8 @@ uv run lse archive restore --project my-project --date 2024-01-15
 - `--start-date` / `--end-date` - Date range for processing
 - `--include-children` - Fetch complete trace hierarchies (all child runs)
 - `--force` - Skip confirmation prompts
+- `--top` - Limit results to top N entries (for URL pattern analysis)
+- `--verbose` - Show detailed progress and analysis statistics
 
 ## Security Considerations
 

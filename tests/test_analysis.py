@@ -352,7 +352,7 @@ class TestErrorRateCalculation:
 
         rates = calculate_error_rates(daily_data)
 
-        assert rates["2025-08-29"]["error_rate"] == 20.0
+        assert rates["2025-08-29"]["error_rate"] == 0.2
         assert rates["2025-08-30"]["error_rate"] == 0.0
 
     def test_calculate_error_rates_zero_traces(self):
@@ -375,7 +375,7 @@ class TestErrorRateCalculation:
         rates = calculate_error_rates(daily_data)
 
         # Should round to 1 decimal place
-        assert abs(rates["2025-08-29"]["error_rate"] - 33.3) < 0.1
+        assert abs(rates["2025-08-29"]["error_rate"] - 0.333333) < 0.000001
 
 
 class TestTraceAnalyzer:
@@ -425,7 +425,74 @@ class TestTraceAnalyzer:
             assert "2025-08-29" in result
             assert result["2025-08-29"]["total_traces"] == 1
             assert result["2025-08-29"]["zenrows_errors"] == 1
-            assert result["2025-08-29"]["error_rate"] == 100.0
+            assert result["2025-08-29"]["error_rate"] == 1.0
+
+    def test_analyzer_processes_date_range(self):
+        """Test analyzer processing traces across date range."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+
+            # Create test data for multiple dates
+            project_dir = base_path / "test-project"
+
+            # Day 1: 2 traces, 1 error
+            day1_dir = project_dir / "2025-08-28"
+            day1_dir.mkdir(parents=True)
+
+            trace1_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace1"},
+                "trace": {
+                    "id": "trace1",
+                    "start_time": "2025-08-28 10:00:00",
+                    "child_runs": [{"name": "zenrows_scraper", "status": "error"}],
+                },
+            }
+            trace2_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace2"},
+                "trace": {
+                    "id": "trace2",
+                    "start_time": "2025-08-28 11:00:00",
+                    "child_runs": [{"name": "zenrows_scraper", "status": "success"}],
+                },
+            }
+
+            with open(day1_dir / "trace1.json", "w") as f:
+                json.dump(trace1_data, f)
+            with open(day1_dir / "trace2.json", "w") as f:
+                json.dump(trace2_data, f)
+
+            # Day 2: 1 trace, 0 errors
+            day2_dir = project_dir / "2025-08-29"
+            day2_dir.mkdir(parents=True)
+
+            trace3_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace3"},
+                "trace": {
+                    "id": "trace3",
+                    "start_time": "2025-08-29 09:00:00",
+                    "child_runs": [{"name": "other_tool", "status": "success"}],
+                },
+            }
+
+            with open(day2_dir / "trace3.json", "w") as f:
+                json.dump(trace3_data, f)
+
+            # Analyze the date range
+            result = self.analyzer.analyze_zenrows_errors(
+                data_dir=base_path,
+                project_name="test-project",
+                start_date=datetime(2025, 8, 28),
+                end_date=datetime(2025, 8, 29),
+            )
+
+            assert len(result) == 2
+            assert result["2025-08-28"]["total_traces"] == 2
+            assert result["2025-08-28"]["zenrows_errors"] == 1
+            assert result["2025-08-28"]["error_rate"] == 0.5
+
+            assert result["2025-08-29"]["total_traces"] == 1
+            assert result["2025-08-29"]["zenrows_errors"] == 0
+            assert result["2025-08-29"]["error_rate"] == 0.0
 
     def test_analyzer_handles_large_trace_files(self):
         """Test that analyzer can handle large trace files efficiently."""
@@ -551,7 +618,7 @@ class TestIntegrationScenarios:
             # Should process valid traces and skip malformed ones
             assert result["2025-08-29"]["total_traces"] == 2
             assert result["2025-08-29"]["zenrows_errors"] == 1
-            assert result["2025-08-29"]["error_rate"] == 50.0
+            assert result["2025-08-29"]["error_rate"] == 0.5
 
     def test_root_vs_child_trace_counting(self):
         """Test that error rate uses root trace count, not total trace count."""
@@ -624,4 +691,327 @@ class TestIntegrationScenarios:
             # Should count only 2 root traces for total, but find 2 errors across all traces
             assert result["2025-08-29"]["total_traces"] == 2  # Only root traces
             assert result["2025-08-29"]["zenrows_errors"] == 2  # Errors from child traces
-            assert result["2025-08-29"]["error_rate"] == 100.0  # 2/2 = 100%
+            assert result["2025-08-29"]["error_rate"] == 1.0  # 2/2 = 100%
+
+
+class TestURLPatternAnalysis:
+    """Test URL pattern analysis functionality."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.analyzer = TraceAnalyzer()
+
+    def test_analyze_url_patterns_basic(self):
+        """Test basic URL pattern analysis."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            # Create test trace with URL data
+            trace_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace-1"},
+                "trace": {
+                    "id": "trace-1",
+                    "name": "due_diligence",
+                    "status": "success",
+                    "start_time": "2025-08-29 10:00:00",
+                    "child_runs": [
+                        {
+                            "id": "child-1",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTPError('404 Client Error: Not Found for url: https://example.com/missing.pdf')",
+                            "inputs": {"url": "https://example.com/document.pdf"},
+                        },
+                        {
+                            "id": "child-2",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 422 Unprocessable Entity",
+                            "inputs": {"target_url": "https://api.github.com/repos/test"},
+                        },
+                    ],
+                },
+            }
+
+            with open(date_dir / "trace1.json", "w") as f:
+                json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            assert "domains" in result
+            assert "file_types" in result
+            assert "example.com" in result["domains"]
+            assert "api.github.com" in result["domains"]
+            assert result["domains"]["example.com"]["count"] == 1
+            assert result["domains"]["api.github.com"]["count"] == 1
+
+    def test_analyze_url_patterns_domain_grouping(self):
+        """Test domain frequency counting and sorting."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            trace_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace-1"},
+                "trace": {
+                    "id": "trace-1",
+                    "name": "due_diligence",
+                    "status": "success",
+                    "start_time": "2025-08-29 10:00:00",
+                    "child_runs": [
+                        {
+                            "id": "child-1",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 404 Not Found",
+                            "inputs": {"url": "https://example.com/doc1.pdf"},
+                        },
+                        {
+                            "id": "child-2",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "Read timeout",
+                            "inputs": {"target_url": "https://example.com/doc2.pdf"},
+                        },
+                        {
+                            "id": "child-3",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 422 Unprocessable Entity",
+                            "inputs": {"url": "https://other.com/page.html"},
+                        },
+                    ],
+                },
+            }
+
+            with open(date_dir / "trace1.json", "w") as f:
+                json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            # Domains should be sorted by frequency (example.com=2, other.com=1)
+            domains_list = list(result["domains"].items())
+            assert domains_list[0][0] == "example.com"  # Most frequent first
+            assert domains_list[0][1]["count"] == 2
+            assert domains_list[1][0] == "other.com"
+            assert domains_list[1][1]["count"] == 1
+
+    def test_analyze_url_patterns_file_types(self):
+        """Test file type distribution analysis."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            trace_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace-1"},
+                "trace": {
+                    "id": "trace-1",
+                    "name": "due_diligence",
+                    "status": "success",
+                    "start_time": "2025-08-29 10:00:00",
+                    "child_runs": [
+                        {
+                            "id": "child-1",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 413 Payload Too Large",
+                            "inputs": {"url": "https://example.com/doc.pdf"},
+                        },
+                        {
+                            "id": "child-2",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 404 Not Found",
+                            "inputs": {"target_url": "https://images.com/photo.jpg"},
+                        },
+                        {
+                            "id": "child-3",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 422 Unprocessable Entity",
+                            "inputs": {"url": "https://api.example.com/data"},
+                        },
+                    ],
+                },
+            }
+
+            with open(date_dir / "trace1.json", "w") as f:
+                json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            assert "pdf" in result["file_types"]
+            assert "image" in result["file_types"]
+            assert "api" in result["file_types"]
+            assert result["file_types"]["pdf"]["count"] == 1
+            assert result["file_types"]["image"]["count"] == 1
+            assert result["file_types"]["api"]["count"] == 1
+
+    def test_analyze_url_patterns_error_categorization(self):
+        """Test integration with existing error categorization system."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            trace_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace-1"},
+                "trace": {
+                    "id": "trace-1",
+                    "name": "due_diligence",
+                    "status": "success",
+                    "start_time": "2025-08-29 10:00:00",
+                    "child_runs": [
+                        {
+                            "id": "child-1",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTPError('404 Client Error: Not Found for url: https://example.com/missing.pdf')",
+                            "inputs": {"url": "https://example.com/missing.pdf"},
+                        },
+                        {
+                            "id": "child-2",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "ReadTimeout: HTTPSConnectionPool(host='slow.com', port=443): Read timed out. (read timeout=60)",
+                            "inputs": {"target_url": "https://slow.com/page.html"},
+                        },
+                    ],
+                },
+            }
+
+            with open(date_dir / "trace1.json", "w") as f:
+                json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            # Should include error categories for each domain
+            assert "error_categories" in result["domains"]["example.com"]
+            assert "error_categories" in result["domains"]["slow.com"]
+            assert "http_404_not_found" in result["domains"]["example.com"]["error_categories"]
+            assert "read_timeout" in result["domains"]["slow.com"]["error_categories"]
+
+    def test_analyze_url_patterns_handles_missing_urls(self):
+        """Test handling traces without URL data gracefully."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+            date_dir = base_path / "test-project" / "2025-08-29"
+            date_dir.mkdir(parents=True)
+
+            trace_data = {
+                "metadata": {"project_name": "test-project", "run_id": "trace-1"},
+                "trace": {
+                    "id": "trace-1",
+                    "name": "due_diligence",
+                    "status": "success",
+                    "start_time": "2025-08-29 10:00:00",
+                    "child_runs": [
+                        {
+                            "id": "child-1",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 404 Not Found",
+                            "inputs": {},  # No URL data
+                        },
+                        {
+                            "id": "child-2",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "Connection failed",
+                            "inputs": {"other_field": "value"},  # No URL field
+                        },
+                        {
+                            "id": "child-3",
+                            "name": "zenrows_scraper",
+                            "status": "error",
+                            "error": "HTTP 422 Unprocessable Entity",
+                            "inputs": {"url": "https://example.com/doc.pdf"},  # Has URL
+                        },
+                    ],
+                },
+            }
+
+            with open(date_dir / "trace1.json", "w") as f:
+                json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path, project_name="test-project", single_date=datetime(2025, 8, 29)
+            )
+
+            # Should only count the trace with URL data
+            assert len(result["domains"]) == 1
+            assert "example.com" in result["domains"]
+            assert result["domains"]["example.com"]["count"] == 1
+            # Should track traces without URLs
+            assert result["traces_without_urls"] == 2
+
+    def test_analyze_url_patterns_date_range(self):
+        """Test URL pattern analysis with date range filtering."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+
+            # Create data for multiple dates
+            for date_str in ["2025-08-29", "2025-08-30"]:
+                date_dir = base_path / "test-project" / date_str
+                date_dir.mkdir(parents=True)
+
+                trace_data = {
+                    "metadata": {"project_name": "test-project", "run_id": f"trace-{date_str}"},
+                    "trace": {
+                        "id": f"trace-{date_str}",
+                        "name": "due_diligence",
+                        "status": "success",
+                        "start_time": f"{date_str} 10:00:00",
+                        "child_runs": [
+                            {
+                                "id": f"child-{date_str}",
+                                "name": "zenrows_scraper",
+                                "status": "error",
+                                "error": "HTTP 404 Not Found",
+                                "inputs": {"url": f"https://example.com/{date_str}.pdf"},
+                            }
+                        ],
+                    },
+                }
+
+                with open(date_dir / "trace1.json", "w") as f:
+                    json.dump(trace_data, f)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path,
+                project_name="test-project",
+                start_date=datetime(2025, 8, 29),
+                end_date=datetime(2025, 8, 30),
+            )
+
+            # Should aggregate data from both dates
+            assert result["domains"]["example.com"]["count"] == 2
+            assert result["file_types"]["pdf"]["count"] == 2
+
+    def test_analyze_url_patterns_empty_data(self):
+        """Test URL pattern analysis with no trace data."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base_path = Path(temp_dir)
+
+            result = self.analyzer.analyze_url_patterns(
+                data_dir=base_path,
+                project_name="nonexistent-project",
+                single_date=datetime(2025, 8, 29),
+            )
+
+            assert result["domains"] == {}
+            assert result["file_types"] == {}
+            assert result["traces_without_urls"] == 0
+            assert result["total_analyzed"] == 0

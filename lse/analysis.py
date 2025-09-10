@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
 from lse.exceptions import ValidationError
+from lse.error_categories import categorize_zenrows_error, get_category_names
+from lse.utils import extract_domain_from_url, classify_file_type
 
 logger = logging.getLogger("lse.analysis")
 
@@ -15,13 +17,17 @@ def find_trace_files(
     data_dir: Path,
     project_name: str,
     single_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ) -> List[Path]:
-    """Find trace files for the specified date.
+    """Find trace files for the specified date or date range.
 
     Args:
         data_dir: Base directory containing trace data
         project_name: Name of the project to search in
-        single_date: Single date to search for (required)
+        single_date: Single date to search for (optional)
+        start_date: Start of date range (optional)
+        end_date: End of date range (optional)
 
     Returns:
         List of trace file paths
@@ -29,7 +35,7 @@ def find_trace_files(
     Raises:
         ValidationError: If no date parameter provided
     """
-    if not single_date:
+    if not single_date and not start_date and not end_date:
         raise ValidationError("Date parameter is required")
 
     project_dir = data_dir / project_name
@@ -39,15 +45,29 @@ def find_trace_files(
 
     trace_files = []
 
-    # Single date mode - only look in the specific date directory
-    date_str = single_date.strftime("%Y-%m-%d")
-    date_dir = project_dir / date_str
-    if date_dir.exists():
-        for trace_file in date_dir.glob("*.json"):
-            if not trace_file.name.startswith("_"):  # Skip summary files
-                trace_files.append(trace_file)
+    if single_date:
+        # Single date mode - only look in the specific date directory
+        date_str = single_date.strftime("%Y-%m-%d")
+        date_dir = project_dir / date_str
+        if date_dir.exists():
+            for trace_file in date_dir.glob("*.json"):
+                if not trace_file.name.startswith("_"):  # Skip summary files
+                    trace_files.append(trace_file)
+        else:
+            logger.warning(f"No data found for date {date_str} in project {project_name}")
     else:
-        logger.warning(f"No data found for date {date_str} in project {project_name}")
+        # Date range mode - look in all directories within range
+        start_str = start_date.strftime("%Y-%m-%d") if start_date else "0000-00-00"
+        end_str = end_date.strftime("%Y-%m-%d") if end_date else "9999-12-31"
+
+        for date_dir in project_dir.iterdir():
+            if date_dir.is_dir():
+                date_str = date_dir.name
+                # Check if this date is within our range
+                if start_str <= date_str <= end_str:
+                    for trace_file in date_dir.glob("*.json"):
+                        if not trace_file.name.startswith("_"):  # Skip summary files
+                            trace_files.append(trace_file)
 
     logger.info(f"Found {len(trace_files)} trace files for analysis")
     return trace_files
@@ -82,8 +102,10 @@ def parse_trace_file(file_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
 
-def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Extract zenrows_scraper errors from trace data.
+def extract_zenrows_errors(
+    trace_data: Dict[str, Any], project_name: str = "unknown"
+) -> List[Dict[str, Any]]:
+    """Extract zenrows_scraper errors from trace data with categorization.
 
     Checks the root trace first for zenrows_scraper errors, then recursively
     searches through child runs (if they exist) to find sub-traces with name
@@ -91,25 +113,49 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
 
     Args:
         trace_data: Parsed trace data
+        project_name: Project name for error logging context
 
     Returns:
-        List of error records containing details about zenrows failures
+        List of error records containing details about zenrows failures with categories
     """
     errors = []
+
+    def create_error_record(run_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create an error record with categorization."""
+        error_message = run_data.get("error", "Unknown error")
+
+        # Create basic error record
+        # Extract target URL from inputs
+        target_url = None
+        inputs = run_data.get("inputs", {})
+        if inputs and isinstance(inputs, dict):
+            # Try different possible input fields for URL
+            target_url = inputs.get("input") or inputs.get("url") or inputs.get("target_url")
+
+        error_record = {
+            "id": run_data.get("id"),
+            "name": run_data.get("name"),
+            "status": run_data.get("status"),
+            "error": error_message,
+            "start_time": run_data.get("start_time"),
+            "end_time": run_data.get("end_time"),
+            "error_message": error_message,  # For categorization
+            "trace_id": trace_data.get("id", "unknown"),  # Root trace ID
+            "project": project_name,  # For logging context
+            "target_url": target_url,  # Add target URL extraction
+        }
+
+        # Add categorization
+        error_record["category"] = categorize_zenrows_error(error_record)
+
+        return error_record
 
     # First check if the root trace itself is a zenrows_scraper with error
     root_name = trace_data.get("name", "").lower()
     root_status = trace_data.get("status", "").lower()
 
     if "zenrows_scraper" in root_name and root_status == "error":
-        error_record = {
-            "id": trace_data.get("id"),
-            "name": trace_data.get("name"),
-            "status": trace_data.get("status"),
-            "error": trace_data.get("error", "Unknown error"),
-            "start_time": trace_data.get("start_time"),
-            "end_time": trace_data.get("end_time"),
-        }
+        error_record = create_error_record(trace_data)
         errors.append(error_record)
 
     def search_child_runs(runs: List[Dict[str, Any]]) -> None:
@@ -126,14 +172,7 @@ def extract_zenrows_errors(trace_data: Dict[str, Any]) -> List[Dict[str, Any]]:
             status = run.get("status", "").lower()
 
             if "zenrows_scraper" in name and status == "error":
-                error_record = {
-                    "id": run.get("id"),
-                    "name": run.get("name"),
-                    "status": run.get("status"),
-                    "error": run.get("error", "Unknown error"),
-                    "start_time": run.get("start_time"),
-                    "end_time": run.get("end_time"),
-                }
+                error_record = create_error_record(run)
                 errors.append(error_record)
 
             # Recursively search nested child runs
@@ -191,34 +230,73 @@ def group_by_date(traces: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]
 
 
 def calculate_error_rates(
-    daily_data: Dict[str, Dict[str, int]],
-) -> Dict[str, Dict[str, Union[int, float]]]:
-    """Calculate error rates for daily trace data.
+    daily_data: Dict[str, Dict[str, Any]],
+) -> Dict[str, Dict[str, Union[int, float, Dict[str, int]]]]:
+    """Calculate error rates for daily trace data with category preservation.
 
     Args:
-        daily_data: Dictionary with date keys and trace/error counts
+        daily_data: Dictionary with date keys and trace/error counts/categories
 
     Returns:
-        Dictionary with error rates added to each day's data
+        Dictionary with error rates added to each day's data and categories preserved
     """
     result = {}
 
     for date_key, data in daily_data.items():
         total_traces = data["total_traces"]
         zenrows_errors = data["zenrows_errors"]
+        categories = data.get("categories", {})
 
         if total_traces == 0:
             error_rate = 0.0
         else:
-            error_rate = round((zenrows_errors / total_traces) * 100, 1)
+            error_rate = round(zenrows_errors / total_traces, 6)
 
         result[date_key] = {
             "total_traces": total_traces,
             "zenrows_errors": zenrows_errors,
             "error_rate": error_rate,
+            "categories": categories,
         }
 
     return result
+
+
+def validate_category_totals(
+    analysis_results: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]],
+) -> None:
+    """Validate that category counts sum to total error counts.
+
+    Args:
+        analysis_results: Results from analyze_zenrows_errors containing categories
+
+    Raises:
+        ValidationError: If category totals don't match expected error counts
+    """
+    for date_key, data in analysis_results.items():
+        total_errors = data.get("zenrows_errors", 0)
+        categories = data.get("categories", {})
+
+        if not categories:
+            # If no categories, should have no errors
+            if total_errors > 0:
+                logger.warning(f"Date {date_key}: Found {total_errors} errors but no categories")
+            continue
+
+        category_sum = sum(categories.values())
+
+        if category_sum != total_errors:
+            error_msg = (
+                f"Category validation failed for {date_key}: "
+                f"category sum ({category_sum}) != total errors ({total_errors}). "
+                f"Categories: {categories}"
+            )
+            logger.error(error_msg)
+            raise ValidationError(error_msg)
+
+        logger.debug(
+            f"Category validation passed for {date_key}: {category_sum} errors categorized"
+        )
 
 
 class TraceAnalyzer:
@@ -233,13 +311,17 @@ class TraceAnalyzer:
         data_dir: Path,
         project_name: str,
         single_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> Dict[str, Dict[str, Union[int, float]]]:
         """Analyze zenrows_scraper errors in trace data.
 
         Args:
             data_dir: Base directory containing trace data
             project_name: Name of the project to analyze
-            single_date: Single date to analyze (required)
+            single_date: Single date to analyze (optional)
+            start_date: Start of date range (optional)
+            end_date: End of date range (optional)
 
         Returns:
             Dictionary with daily error statistics
@@ -251,6 +333,8 @@ class TraceAnalyzer:
             data_dir=data_dir,
             project_name=project_name,
             single_date=single_date,
+            start_date=start_date,
+            end_date=end_date,
         )
 
         if not trace_files:
@@ -285,20 +369,241 @@ class TraceAnalyzer:
             total_errors = 0
 
             # Count zenrows errors across ALL traces (both root and child)
+            # Also collect category statistics
+            category_counts = {}
+            for category in get_category_names():
+                category_counts[category] = 0
+
             for trace in date_traces:
-                errors = extract_zenrows_errors(trace)
+                errors = extract_zenrows_errors(trace, project_name)
                 total_errors += len(errors)
+
+                # Count errors by category
+                for error in errors:
+                    category = error.get("category", "unknown_errors")
+                    if category in category_counts:
+                        category_counts[category] += 1
+                    else:
+                        # Handle unexpected categories
+                        category_counts[category] = category_counts.get(category, 0) + 1
 
             daily_data[date_key] = {
                 "total_traces": total_root_traces,
                 "zenrows_errors": total_errors,
+                "categories": category_counts,
             }
 
         # Calculate error rates
         result = calculate_error_rates(daily_data)
 
+        # Validate category counts sum to total errors
+        validate_category_totals(result)
+
         self.logger.info(f"Analysis completed for {len(result)} days")
         return result
+
+    def analyze_url_patterns(
+        self,
+        data_dir: Path,
+        project_name: str,
+        single_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Any]:
+        """Analyze URL patterns and domains from zenrows_scraper errors.
+
+        Args:
+            data_dir: Base directory containing trace data
+            project_name: Name of the project to analyze
+            single_date: Single date to analyze (optional)
+            start_date: Start of date range (optional)
+            end_date: End of date range (optional)
+
+        Returns:
+            Dictionary with URL pattern statistics including domains and file types
+        """
+        self.logger.info("Starting URL pattern analysis")
+
+        # Find relevant trace files using existing infrastructure
+        trace_files = find_trace_files(
+            data_dir=data_dir,
+            project_name=project_name,
+            single_date=single_date,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+        if not trace_files:
+            self.logger.warning("No trace files found for analysis")
+            return {"domains": {}, "file_types": {}, "traces_without_urls": 0, "total_analyzed": 0}
+
+        # Parse all trace files
+        traces = []
+        for file_path in trace_files:
+            trace_data = parse_trace_file(file_path)
+            if trace_data:
+                traces.append(trace_data)
+
+        if not traces:
+            self.logger.warning("No valid traces found after parsing")
+            return {"domains": {}, "file_types": {}, "traces_without_urls": 0, "total_analyzed": 0}
+
+        # Group traces by date and filter by requested dates
+        grouped_traces = group_by_date(traces)
+
+        if single_date:
+            requested_date = single_date.strftime("%Y-%m-%d")
+            grouped_traces = {k: v for k, v in grouped_traces.items() if k == requested_date}
+        elif start_date or end_date:
+            start_str = start_date.strftime("%Y-%m-%d") if start_date else "0000-00-00"
+            end_str = end_date.strftime("%Y-%m-%d") if end_date else "9999-12-31"
+            grouped_traces = {k: v for k, v in grouped_traces.items() if start_str <= k <= end_str}
+
+        # Aggregate URL pattern statistics across all dates
+        domain_stats = {}
+        file_type_stats = {}
+        traces_without_urls = 0
+        total_analyzed = 0
+        total_zenrows_traces = 0
+
+        for date_key, date_traces in grouped_traces.items():
+            for trace in date_traces:
+                # Count total zenrows traces (successful + failed)
+                zenrows_count = count_zenrows_traces(trace)
+                total_zenrows_traces += zenrows_count
+
+                # Extract zenrows errors to get URL data
+                errors = extract_zenrows_errors(trace, project_name)
+
+                for error in errors:
+                    total_analyzed += 1
+                    target_url = error.get("target_url")
+
+                    if not target_url:
+                        traces_without_urls += 1
+                        continue
+
+                    # Extract domain and file type using utilities from Task 1
+                    domain = extract_domain_from_url(target_url)
+                    file_type = classify_file_type(target_url)
+
+                    # Get error category for this error
+                    error_category = error.get("category", "unknown_errors")
+
+                    # Update domain statistics with full URL information
+                    if domain:
+                        if domain not in domain_stats:
+                            domain_stats[domain] = {
+                                "count": 0,
+                                "error_categories": {},
+                                "sample_urls": set(),
+                            }
+
+                        domain_stats[domain]["count"] += 1
+
+                        # Track sample URLs for this domain (limit to avoid memory bloat)
+                        if len(domain_stats[domain]["sample_urls"]) < 10:
+                            domain_stats[domain]["sample_urls"].add(target_url)
+                            # Debug logging
+                            if (
+                                domain_stats[domain]["count"] <= 2
+                            ):  # Only log first few for debugging
+                                self.logger.debug(f"Added URL to {domain}: {target_url}")
+
+                        # Track error categories for this domain
+                        if error_category not in domain_stats[domain]["error_categories"]:
+                            domain_stats[domain]["error_categories"][error_category] = 0
+                        domain_stats[domain]["error_categories"][error_category] += 1
+
+                    # Update file type statistics
+                    if file_type:
+                        if file_type not in file_type_stats:
+                            file_type_stats[file_type] = {"count": 0, "error_categories": {}}
+
+                        file_type_stats[file_type]["count"] += 1
+
+                        # Track error categories for this file type
+                        if error_category not in file_type_stats[file_type]["error_categories"]:
+                            file_type_stats[file_type]["error_categories"][error_category] = 0
+                        file_type_stats[file_type]["error_categories"][error_category] += 1
+
+        # Sort domains and file types by frequency (descending)
+        # Also convert sets to lists for JSON serialization
+        for domain, domain_data in domain_stats.items():
+            if "sample_urls" in domain_data:
+                urls_before = len(domain_data["sample_urls"])
+                domain_data["sample_urls"] = list(domain_data["sample_urls"])
+                urls_after = len(domain_data["sample_urls"])
+                if urls_after > 0:  # Only log domains that have URLs
+                    self.logger.debug(
+                        f"Domain {domain}: converted {urls_before} URLs to list, result: {urls_after} URLs: {domain_data['sample_urls'][:2]}"
+                    )
+
+        sorted_domains = dict(
+            sorted(domain_stats.items(), key=lambda x: x[1]["count"], reverse=True)
+        )
+
+        sorted_file_types = dict(
+            sorted(file_type_stats.items(), key=lambda x: x[1]["count"], reverse=True)
+        )
+
+        result = {
+            "domains": sorted_domains,
+            "file_types": sorted_file_types,
+            "traces_without_urls": traces_without_urls,
+            "total_analyzed": total_analyzed,
+            "total_zenrows_traces": total_zenrows_traces,
+        }
+
+        self.logger.info(
+            f"URL pattern analysis completed: {len(sorted_domains)} domains, "
+            f"{len(sorted_file_types)} file types, {total_analyzed} total errors analyzed from {total_zenrows_traces} ZenRows traces"
+        )
+
+        return result
+
+
+def count_zenrows_traces(trace: Dict[str, Any]) -> int:
+    """Count total zenrows_scraper traces (both successful and failed).
+
+    Args:
+        trace: The trace data to analyze
+
+    Returns:
+        Total number of zenrows_scraper runs found
+    """
+    count = 0
+
+    # Check root trace
+    root_name = trace.get("name", "").lower()
+    if "zenrows_scraper" in root_name:
+        count += 1
+
+    # Check child runs recursively
+    def check_children(runs):
+        nonlocal count
+        if not runs:
+            return
+
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+
+            run_name = run.get("name", "").lower()
+            if "zenrows_scraper" in run_name:
+                count += 1
+
+            # Recurse into nested children
+            child_runs = run.get("child_runs", [])
+            if child_runs:
+                check_children(child_runs)
+
+    # Start recursion with top-level child runs
+    child_runs = trace.get("child_runs", [])
+    if child_runs:
+        check_children(child_runs)
+
+    return count
 
 
 def extract_crypto_symbol(trace: Dict[str, Any]) -> str:

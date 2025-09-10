@@ -54,8 +54,8 @@ class TestReportCommandParameters:
             # Should not fail due to parameter parsing
             assert "--date" not in result.stdout or result.exit_code == 0
 
-    def test_zenrows_errors_rejects_start_date_parameter(self):
-        """Test that --start-date parameter is rejected with clear error."""
+    def test_zenrows_errors_requires_end_date_with_start_date(self):
+        """Test that --start-date requires --end-date."""
         result = self.runner.invoke(
             app,
             [
@@ -66,14 +66,13 @@ class TestReportCommandParameters:
             ],
         )
 
-        # Should fail with parameter parsing error
+        # Should fail because end-date is required with start-date
         assert result.exit_code != 0
-        # Typer sends error messages to output
         output = result.stdout + result.stderr
-        assert "start-date" in output or "No such option" in output
+        assert "End date is required when start date is provided" in output
 
-    def test_zenrows_errors_rejects_end_date_parameter(self):
-        """Test that --end-date parameter is rejected with clear error."""
+    def test_zenrows_errors_requires_start_date_with_end_date(self):
+        """Test that --end-date requires --start-date."""
         result = self.runner.invoke(
             app,
             [
@@ -84,11 +83,10 @@ class TestReportCommandParameters:
             ],
         )
 
-        # Should fail with parameter parsing error
+        # Should fail because start-date is required with end-date
         assert result.exit_code != 0
-        # Typer sends error messages to output
         output = result.stdout + result.stderr
-        assert "end-date" in output or "No such option" in output
+        assert "Start date is required when end date is provided" in output
 
     def test_zenrows_errors_shows_help_text(self):
         """Test that help text is comprehensive and useful."""
@@ -194,14 +192,13 @@ class TestZenrowsDetailCommand:
         assert "hierarchical" in result.stdout.lower() or "detail" in result.stdout.lower()
 
     def test_requires_date_parameter(self):
-        """Test that --date parameter is required."""
+        """Test that at least one date parameter is required."""
         result = self.runner.invoke(app, ["report", "zenrows-errors"])
 
-        # Should require the --date parameter
+        # Should require at least one date parameter
         assert result.exit_code != 0
-        # Typer sends error messages to output
-        output = (result.stdout + result.stderr).lower()
-        assert "missing option" in output or "required" in output
+        output = result.stdout + result.stderr
+        assert "At least one date parameter is required" in output
 
     def test_accepts_valid_single_date(self):
         """Test that valid single date is accepted."""

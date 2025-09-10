@@ -6,43 +6,80 @@ from typing import Dict, Union, Any
 
 from rich.console import Console
 from rich.tree import Tree
+from lse.error_categories import get_category_breakdown_columns
 
 logger = logging.getLogger("lse.formatters")
 
 
 def format_csv_report(
-    analysis_data: Dict[str, Dict[str, Union[int, float]]], title: str = "Trace Analysis Report"
+    analysis_data: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]],
+    title: str = "Trace Analysis Report",
 ) -> str:
-    """Format analysis data as CSV report.
+    """Format analysis data as CSV report with optional category breakdown.
 
     Args:
-        analysis_data: Dictionary with date keys and analysis results
+        analysis_data: Dictionary with date keys and analysis results (may include categories)
         title: Optional title for logging (not included in output)
 
     Returns:
-        CSV formatted string with headers and data rows
+        CSV formatted string with headers and data rows including category columns if present
     """
     logger.info(f"Formatting CSV report: {title}")
 
-    # CSV header
-    header = "Date,Total Traces,Zenrows Errors,Error Rate"
+    # Build CSV header - start with core columns (without error rate)
+    header_parts = ["Date", "Total Traces", "Zenrows Errors"]
+
+    # Check if any data has categories to determine if we need category columns
+    has_categories = False
+    for data in analysis_data.values():
+        if "categories" in data:
+            has_categories = True
+            break
+
+    if has_categories:
+        # Add category columns in frequency order
+        category_columns = get_category_breakdown_columns()
+        header_parts.extend(category_columns)
+
+    # Add error rate at the very end
+    header_parts.append("Error Rate")
+
+    header = ",".join(header_parts)
     lines = [header]
 
     # Sort dates for consistent output
     for date_key in sorted(analysis_data.keys()):
         data = analysis_data[date_key]
 
-        # Format error rate as percentage with 1 decimal place
-        error_rate = f"{data['error_rate']:.1f}%"
+        # Start with core columns (without error rate)
+        line_parts = [date_key, str(data["total_traces"]), str(data["zenrows_errors"])]
 
-        # Create CSV row
-        line = f"{date_key},{data['total_traces']},{data['zenrows_errors']},{error_rate}"
+        # Add category counts if present
+        if has_categories:
+            categories = data.get("categories", {})
+            category_columns = get_category_breakdown_columns()
+
+            # Each column is a count column now
+            for count_col in category_columns:
+                # Extract category name (remove _count suffix)
+                category = count_col.replace("_count", "")
+                count = categories.get(category, 0)
+
+                line_parts.append(str(count))
+
+        # Add error rate at the very end
+        error_rate = f"{data['error_rate']:.4f}"
+        line_parts.append(error_rate)
+
+        line = ",".join(line_parts)
         lines.append(line)
 
     # Join with newlines and add final newline
     result = "\n".join(lines) + "\n"
 
-    logger.debug(f"Generated CSV report with {len(lines) - 1} data rows")
+    logger.debug(
+        f"Generated CSV report with {len(lines) - 1} data rows and {len(header_parts)} columns"
+    )
     return result
 
 
@@ -72,7 +109,7 @@ def format_summary_stats(
 
     overall_error_rate = 0.0
     if total_traces > 0:
-        overall_error_rate = round((total_errors / total_traces) * 100, 1)
+        overall_error_rate = round(total_errors / total_traces, 6)
 
     # Find best and worst days
     worst_day = None
@@ -106,19 +143,22 @@ class ReportFormatter:
         """Initialize the report formatter."""
         self.logger = logging.getLogger("lse.formatters.ReportFormatter")
 
-    def format_zenrows_report(self, analysis_data: Dict[str, Dict[str, Union[int, float]]]) -> str:
-        """Format zenrows error analysis data as CSV report.
+    def format_zenrows_report(
+        self, analysis_data: Dict[str, Dict[str, Union[int, float, Dict[str, int]]]]
+    ) -> str:
+        """Format zenrows error analysis data as CSV report with optional category breakdown.
 
         Args:
-            analysis_data: Analysis results from TraceAnalyzer
+            analysis_data: Analysis results from TraceAnalyzer (may include category data)
 
         Returns:
-            CSV formatted report string
+            CSV formatted report string with category columns if categories are present
         """
         self.logger.info("Formatting zenrows error report")
 
         if not analysis_data:
             self.logger.warning("No analysis data provided, returning empty report")
+            # Return basic header for backward compatibility when no data is provided
             return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
         return format_csv_report(analysis_data, "Zenrows Error Rate Report")
@@ -142,13 +182,13 @@ class ReportFormatter:
         lines.append(f"Analysis period: {stats['total_days']} day(s)")
         lines.append(f"Total traces analyzed: {stats['total_traces']}")
         lines.append(f"Total zenrows errors: {stats['total_zenrows_errors']}")
-        lines.append(f"Overall error rate: {stats['overall_error_rate']:.1f}%")
+        lines.append(f"Overall error rate: {stats['overall_error_rate'] * 100:.1f}%")
 
         if stats["worst_day"] and stats["best_day"]:
             worst_data = analysis_data[stats["worst_day"]]
             best_data = analysis_data[stats["best_day"]]
-            lines.append(f"Worst day: {stats['worst_day']} ({worst_data['error_rate']:.1f}%)")
-            lines.append(f"Best day: {stats['best_day']} ({best_data['error_rate']:.1f}%)")
+            lines.append(f"Worst day: {stats['worst_day']} ({worst_data['error_rate'] * 100:.1f}%)")
+            lines.append(f"Best day: {stats['best_day']} ({best_data['error_rate'] * 100:.1f}%)")
 
         return "\n".join(lines) + "\n"
 
@@ -324,6 +364,95 @@ class ReportFormatter:
         }
 
         return json.dumps(output, indent=2)
+
+    def format_zenrows_url_patterns_report(
+        self, url_results: Dict[str, Any], top: int = None
+    ) -> str:
+        """Format zenrows URL pattern analysis results as CSV report.
+
+        Args:
+            url_results: Dictionary containing domain and file type analysis results
+            top: Optional limit for number of results to include
+
+        Returns:
+            CSV formatted report string with URL pattern statistics
+        """
+        self.logger.info("Formatting zenrows URL patterns report")
+
+        if not url_results:
+            return "Type,Name,Count,Top Error Categories,Sample URLs\n"
+
+        # Header
+        header = "Type,Name,Count,Top Error Categories,Sample URLs"
+        lines = [header]
+
+        # Process domains
+        domains = url_results.get("domains", {})
+        if domains:
+            domain_items = list(domains.items())
+            if top:
+                domain_items = domain_items[:top]
+
+            for domain, stats in domain_items:
+                count = stats.get("count", 0)
+                error_categories = stats.get("error_categories", {})
+                sample_urls = stats.get("sample_urls", [])
+
+                # Format top error categories
+                category_parts = []
+                for category, cat_count in sorted(
+                    error_categories.items(), key=lambda x: x[1], reverse=True
+                ):
+                    category_parts.append(f"{category}({cat_count})")
+
+                categories_str = ";".join(category_parts) if category_parts else ""
+
+                # Format sample URLs (limit to first 3 for readability)
+                sample_urls_str = ";".join(sample_urls[:3]) if sample_urls else ""
+
+                lines.append(f'domain,{domain},{count},"{categories_str}","{sample_urls_str}"')
+
+        # Process file types
+        file_types = url_results.get("file_types", {})
+        if file_types:
+            file_type_items = list(file_types.items())
+            if top:
+                file_type_items = file_type_items[:top]
+
+            for file_type, stats in file_type_items:
+                count = stats.get("count", 0)
+                error_categories = stats.get("error_categories", {})
+
+                # Format top error categories
+                category_parts = []
+                for category, cat_count in sorted(
+                    error_categories.items(), key=lambda x: x[1], reverse=True
+                ):
+                    category_parts.append(f"{category}({cat_count})")
+
+                categories_str = ";".join(category_parts) if category_parts else ""
+                lines.append(f'file_type,{file_type},{count},"{categories_str}",""')
+
+        # Add summary statistics as comments (CSV-safe format)
+        total_analyzed = url_results.get("total_analyzed", 0)
+        traces_without_urls = url_results.get("traces_without_urls", 0)
+        total_zenrows_traces = url_results.get("total_zenrows_traces", 0)
+
+        # Debug logging
+        self.logger.debug(
+            f"Formatter received: total_analyzed={total_analyzed}, total_zenrows_traces={total_zenrows_traces}, traces_without_urls={traces_without_urls}"
+        )
+
+        if total_analyzed > 0 or total_zenrows_traces > 0:
+            lines.append(
+                f"# Summary: {total_analyzed} errors analyzed from {total_zenrows_traces} total ZenRows traces, {traces_without_urls} without URLs"
+            )
+
+        result = "\n".join(lines) + "\n"
+        self.logger.info(
+            f"Formatted URL patterns report with {len(domains)} domains and {len(file_types)} file types"
+        )
+        return result
 
     def format_zenrows_detail_rich(self, hierarchy: Dict[str, Dict[str, Any]]) -> str:
         """Format zenrows detail hierarchy using Rich for terminal display.
