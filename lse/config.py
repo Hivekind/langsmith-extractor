@@ -42,6 +42,20 @@ class Settings(BaseSettings):
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
+    # Evaluation API Configuration
+    eval_api_endpoint: Optional[str] = Field(
+        default=None,
+        description="External evaluation API endpoint URL",
+    )
+    eval_api_username: Optional[str] = Field(
+        default=None,
+        description="Username for basic authentication with evaluation API",
+    )
+    eval_api_password: Optional[str] = Field(
+        default=None,
+        description="Password for basic authentication with evaluation API",
+    )
+
     # Google Drive Configuration (for archive functionality)
     google_drive_folder_url: Optional[str] = Field(
         default=None,
