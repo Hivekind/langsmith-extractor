@@ -45,11 +45,6 @@ def archive_fetch(
         "--include-children",
         help="Fetch all child runs for each trace (complete hierarchy)",
     ),
-    delay_ms: int = typer.Option(
-        200,
-        "--delay-ms",
-        help="Delay in milliseconds between trace hierarchy requests (default: 200)",
-    ),
 ) -> None:
     """Fetch all traces for a specific date and project.
 
@@ -123,11 +118,12 @@ def archive_fetch(
         all_runs = []
         if include_children:
             console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
-            if delay_ms > 0:
-                estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
-                console.print(
-                    f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
-                )
+            # Use hardcoded 1000ms delay to avoid rate limits
+            delay_ms = 1000
+            estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
+            console.print(
+                f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
+            )
 
             with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
                 task_id = progress.add_task("Processing traces", total=len(root_runs))
@@ -143,9 +139,8 @@ def archive_fetch(
                     trace_runs = client.fetch_trace_hierarchy(root_run.id)
                     all_runs.extend(trace_runs)
 
-                    # Add configurable delay to avoid rate limits
-                    if delay_ms > 0:
-                        time.sleep(delay_ms / 1000.0)
+                    # Add 1000ms delay to avoid rate limits
+                    time.sleep(1.0)
 
             console.print(
                 f"[green]Total runs including children: {len(all_runs)} "
@@ -741,20 +736,22 @@ def archive_to_db(
                     try:
                         with open(json_file, "r") as f:
                             file_data = json.load(f)
-                            
+
                             # Handle different JSON file formats
                             if "trace" in file_data:
                                 # New format with metadata wrapper
                                 run_data = file_data["trace"]
                             elif "metadata" in file_data and "id" not in file_data:
                                 # Skip if it's just metadata without trace data
-                                console.print(f"[yellow]⚠️  Skipping metadata-only file: {json_file.name}[/yellow]")
+                                console.print(
+                                    f"[yellow]⚠️  Skipping metadata-only file: {json_file.name}[/yellow]"
+                                )
                                 progress.update(task, advance=1)
                                 continue
                             else:
                                 # Assume it's direct run data
                                 run_data = file_data
-                            
+
                             runs_data.append(run_data)
                         progress.update(task, advance=1)
                     except Exception as e:
@@ -967,6 +964,8 @@ def archive_full_sweep(
                             trace_runs = client.fetch_trace_hierarchy(root_run.id)
                             child_runs = [run for run in trace_runs if run.id != root_run.id]
                             all_runs.extend(child_runs)
+                            # Add 1000ms delay to avoid rate limits
+                            time.sleep(1.0)
                         except Exception as e:
                             console.print(
                                 f"[yellow]⚠️  Failed to fetch children for trace {root_run.trace_id}: {e}[/yellow]"
@@ -1057,7 +1056,7 @@ def archive_full_sweep(
                     try:
                         with open(json_file, "r") as f:
                             file_data = json.load(f)
-                            
+
                             # Handle different JSON file formats
                             if "trace" in file_data:
                                 # New format with metadata wrapper
@@ -1068,7 +1067,7 @@ def archive_full_sweep(
                             else:
                                 # Assume it's direct run data
                                 run_data = file_data
-                            
+
                             runs_data.append(run_data)
                     except Exception as e:
                         console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
