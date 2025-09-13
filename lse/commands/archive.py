@@ -40,17 +40,12 @@ def archive_fetch(
         "--force",
         help="Skip confirmation if local folder already exists",
     ),
-    include_children: bool = typer.Option(
-        False,
-        "--include-children",
-        help="Fetch all child runs for each trace (complete hierarchy)",
-    ),
 ) -> None:
     """Fetch all traces for a specific date and project.
 
     This command fetches ALL traces (no limit) for the given date
     and stores them in the local filesystem organized by creation date.
-    Use --include-children to fetch complete trace hierarchies with all child runs.
+    Always fetches complete trace hierarchies including all child runs.
     """
     try:
         from lse.client import LangSmithClient
@@ -114,41 +109,37 @@ def archive_fetch(
 
         console.print(f"[green]Found {len(root_runs)} root traces for {date} (UTC)[/green]")
 
-        # If include_children is True, fetch all child runs for each trace
+        # Always fetch all child runs for each trace (complete hierarchies)
         all_runs = []
-        if include_children:
-            console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
-            # Use hardcoded 1000ms delay to avoid rate limits
-            delay_ms = 1000
-            estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
-            console.print(
-                f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
-            )
+        console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
+        # Use hardcoded 1000ms delay to avoid rate limits
+        delay_ms = 1000
+        estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
+        console.print(
+            f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
+        )
 
-            with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
-                task_id = progress.add_task("Processing traces", total=len(root_runs))
+        with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
+            task_id = progress.add_task("Processing traces", total=len(root_runs))
 
-                for i, root_run in enumerate(root_runs):
-                    progress.update(
-                        task_id,
-                        advance=1,
-                        description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
-                    )
+            for i, root_run in enumerate(root_runs):
+                progress.update(
+                    task_id,
+                    advance=1,
+                    description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
+                )
 
-                    # Fetch complete hierarchy for this trace
-                    trace_runs = client.fetch_trace_hierarchy(root_run.id)
-                    all_runs.extend(trace_runs)
+                # Fetch complete hierarchy for this trace
+                trace_runs = client.fetch_trace_hierarchy(root_run.id)
+                all_runs.extend(trace_runs)
 
-                    # Add 1000ms delay to avoid rate limits
-                    time.sleep(1.0)
+                # Add 1000ms delay to avoid rate limits
+                time.sleep(1.0)
 
-            console.print(
-                f"[green]Total runs including children: {len(all_runs)} "
-                f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
-            )
-        else:
-            all_runs = root_runs
-            console.print("[dim]Use --include-children to fetch complete trace hierarchies[/dim]")
+        console.print(
+            f"[green]Total runs including children: {len(all_runs)} "
+            f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
+        )
 
         # Save all runs with progress
         console.print(f"[blue]Saving {len(all_runs)} runs to local storage...[/blue]")
@@ -860,16 +851,11 @@ def archive_full_sweep(
         "--force",
         help="Skip all confirmation prompts",
     ),
-    include_children: bool = typer.Option(
-        False,
-        "--include-children",
-        help="Fetch complete trace hierarchies with all child runs",
-    ),
 ) -> None:
     """Complete archival workflow: fetch → zip → upload → populate database.
 
     Performs the entire archival process in sequence:
-    1. Fetch traces from LangSmith API to local files
+    1. Fetch traces from LangSmith API to local files (with complete trace hierarchies)
     2. Create zip archive from local files
     3. Upload zip archive to Google Drive
     4. Load trace data to Postgres database
@@ -945,31 +931,28 @@ def archive_full_sweep(
 
             console.print(f"[green]Found {len(root_runs)} root traces[/green]")
 
-            # Optionally fetch child runs
+            # Always fetch child runs (complete trace hierarchies)
             all_runs = list(root_runs)
-            if include_children:
-                console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
-                with ProgressContext(
-                    f"Fetching child runs for {len(root_runs)} traces"
-                ) as progress:
-                    task_id = progress.add_task("Processing traces", total=len(root_runs))
+            console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
+            with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
+                task_id = progress.add_task("Processing traces", total=len(root_runs))
 
-                    for i, root_run in enumerate(root_runs):
-                        progress.update(
-                            task_id,
-                            advance=1,
-                            description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
+                for i, root_run in enumerate(root_runs):
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
+                    )
+                    try:
+                        trace_runs = client.fetch_trace_hierarchy(root_run.id)
+                        child_runs = [run for run in trace_runs if run.id != root_run.id]
+                        all_runs.extend(child_runs)
+                        # Add 1000ms delay to avoid rate limits
+                        time.sleep(1.0)
+                    except Exception as e:
+                        console.print(
+                            f"[yellow]⚠️  Failed to fetch children for trace {root_run.trace_id}: {e}[/yellow]"
                         )
-                        try:
-                            trace_runs = client.fetch_trace_hierarchy(root_run.id)
-                            child_runs = [run for run in trace_runs if run.id != root_run.id]
-                            all_runs.extend(child_runs)
-                            # Add 1000ms delay to avoid rate limits
-                            time.sleep(1.0)
-                        except Exception as e:
-                            console.print(
-                                f"[yellow]⚠️  Failed to fetch children for trace {root_run.trace_id}: {e}[/yellow]"
-                            )
 
                 console.print(f"[green]Total runs including children: {len(all_runs)}[/green]")
 
