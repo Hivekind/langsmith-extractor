@@ -616,3 +616,247 @@ lse eval run --dataset-name "eval_dataset_2025_09" --experiment-prefix "exp_2025
 ### Dependencies
 - Usage feedback from zenrows error reporting
 - Additional stakeholder report requirements
+
+## Phase 8: Database Infrastructure Setup 🚧 PLANNED
+
+**Goal:** Establish Postgres database with JSONB document storage for LangSmith trace data
+**Success Criteria:** Working Postgres instance with proper schema and application connectivity
+
+### Problem Statement
+Current file-based storage has limitations for querying and analyzing trace data. Need to migrate to a database that:
+1. Supports complex queries across trace data
+2. Enables date range operations for evaluation datasets
+3. Provides better performance for reporting
+4. Correctly models LangSmith's Run-based architecture
+
+### LangSmith Data Model Clarification
+**Corrected Understanding**:
+- **Run**: Individual execution unit with unique run_id
+- **Trace**: Collection of runs sharing the same trace_id
+- **Root Run**: Top-level run where run_id = trace_id
+- **Child Runs**: Runs with different run_ids but same trace_id
+
+**Database Approach**:
+- Store individual **Runs** (not aggregated traces)
+- Reconstruct traces by grouping runs with same trace_id
+- Enable trace-level analysis through SQL aggregation
+
+### Features
+
+- [ ] **Docker Postgres setup** - Dockerized Postgres instance for local development `M`
+- [ ] **Database schema design** - JSONB-based schema supporting LangSmith trace model `M`
+- [ ] **Python database connectivity** - SQLAlchemy/asyncpg integration with connection pooling `S`
+- [ ] **Schema migration system** - Alembic for database schema management `S`
+- [ ] **Database configuration** - Environment-based DB connection management `S`
+- [ ] **Index optimization** - Indexes for date-based and project-based queries `S`
+- [ ] **Connection testing** - Health checks and connectivity validation `S`
+
+### Database Schema Design
+```sql
+-- Run-based storage (correctly models LangSmith's architecture)
+CREATE TABLE runs (
+    id SERIAL PRIMARY KEY,
+    run_id VARCHAR(255) UNIQUE NOT NULL,
+    trace_id VARCHAR(255) NOT NULL,
+    project VARCHAR(255) NOT NULL,
+    run_date DATE NOT NULL,
+    data JSONB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    -- Ensure consistency between table fields and JSONB data
+    CONSTRAINT check_run_id_matches CHECK (data->>'run_id' = run_id),
+    CONSTRAINT check_trace_id_matches CHECK (data->>'trace_id' = trace_id),
+    CONSTRAINT check_project_matches CHECK (data->>'project' = project),
+    CONSTRAINT check_date_matches CHECK ((data->>'run_date')::date = run_date)
+);
+
+-- Indexes optimized for run aggregation and trace reconstruction
+CREATE INDEX idx_runs_project_date ON runs(project, run_date);
+CREATE INDEX idx_runs_trace_id ON runs(trace_id);
+CREATE INDEX idx_runs_run_date ON runs(run_date);
+CREATE INDEX idx_runs_data_gin ON runs USING gin(data);
+CREATE INDEX idx_runs_trace_aggregation ON runs(trace_id, project, run_date, run_id);
+```
+
+### Docker Configuration
+- **Local Development**: Docker Compose with Postgres 16
+- **Volume Management**: Persistent data storage
+- **Environment Variables**: Database credentials and connection strings
+- **Port Configuration**: Standard Postgres port mapping
+
+### Dependencies
+- Docker and Docker Compose installed
+- Python database libraries (asyncpg, SQLAlchemy)
+- Database migration tools (Alembic)
+
+## Phase 9: Archive Tool Database Integration 🚧 PLANNED
+
+**Goal:** Add run storage to database alongside existing Google Drive archiving workflow
+**Success Criteria:** Archive commands store individual runs in Postgres with trace aggregation capabilities
+
+### Problem Statement
+Need to maintain existing Google Drive archiving while adding run-based database storage:
+1. Local JSON files remain necessary for Google Drive uploads
+2. Database stores individual runs (each JSON file = one run)
+3. Traces reconstructed via SQL aggregation by trace_id
+4. Data consistency between files and database maintained
+
+### Features
+
+- [ ] **Archive to database command** - `lse archive to-db` for loading files to database `M`
+- [ ] **Database storage layer** - TraceDatabase class for JSONB operations `M`
+- [ ] **Data consistency checks** - Validate file and database consistency `S`
+- [ ] **Full sweep command** - `lse archive full-sweep` for complete workflow `M`
+- [ ] **Batch insert optimization** - Efficient bulk data loading `S`
+- [ ] **Duplicate handling** - Upsert logic for trace updates `S`
+- [ ] **Progress tracking** - Progress bars for database operations `S`
+
+### New Command Interfaces
+```bash
+# Load existing files to database
+lse archive to-db --date 2025-09-13 --project my-project
+
+# Complete archival workflow (fetch → zip → upload → populate DB)
+lse archive full-sweep --date 2025-09-13 --project my-project
+
+# Verify consistency between files and database
+lse archive verify --date 2025-09-13 --project my-project
+```
+
+### Workflow Integration
+1. **Fetch**: `lse archive fetch` (unchanged) → Local JSON files
+2. **Zip**: `lse archive zip` (unchanged) → Archive files
+3. **Upload**: `lse archive upload` (unchanged) → Google Drive
+4. **Populate**: `lse archive to-db` (new) → Postgres database
+5. **Full Sweep**: `lse archive full-sweep` (new) → All steps combined
+
+### Technical Implementation
+- **TraceDatabase Class**: Async database operations with connection pooling
+- **Batch Processing**: Chunked inserts for large datasets
+- **Transaction Management**: Atomic operations with rollback capability
+- **Error Recovery**: Graceful handling of database connectivity issues
+
+### Dependencies
+- Phase 8 (Database Infrastructure) completed
+- Existing archive functionality preserved
+- Google Drive integration unchanged
+
+## Phase 10: Evaluation Dataset Database Migration 🚧 PLANNED
+
+**Goal:** Update evaluation to query runs and aggregate into traces from database
+**Success Criteria:** Evaluation commands reconstruct traces from runs with date range support
+
+### Problem Statement
+Current evaluation dataset creation requires:
+1. Reading individual run files from local storage
+2. Single-date operations only
+3. Manual trace extraction step
+4. File-based workflow dependencies
+
+Target improvements:
+1. Database queries aggregate runs by trace_id to reconstruct traces
+2. Date range support for dataset creation across multiple days
+3. Eliminate separate extract-traces step
+4. Maintain dataset format compatibility while improving performance
+
+### Features
+
+- [ ] **Database query integration** - Update TraceExtractor to query Postgres `M`
+- [ ] **Date range support** - Support --start-date and --end-date parameters `M`
+- [ ] **Direct dataset creation** - Query database directly without extract-traces step `M`
+- [ ] **Query optimization** - Efficient database queries for trace filtering `S`
+- [ ] **Backward compatibility** - Maintain existing dataset format and API `S`
+- [ ] **Enhanced filtering** - Database-level filtering for evaluation criteria `S`
+- [ ] **Performance improvements** - Faster dataset creation via database queries `S`
+
+### Updated Command Interfaces
+```bash
+# Create dataset directly from database (single date)
+lse eval create-dataset --date 2025-09-13 --project my-project --eval-type accuracy
+
+# Create dataset from date range
+lse eval create-dataset --start-date 2025-09-01 --end-date 2025-09-13 --project my-project --eval-type accuracy
+
+# Upload and run evaluation (unchanged)
+lse eval upload --dataset dataset.json --name eval_dataset_2025_09
+lse eval run --dataset-name eval_dataset_2025_09 --experiment-prefix exp_20250913 --eval-type accuracy
+```
+
+### Technical Changes
+- **Remove extract-traces command** - Direct database queries replace file extraction
+- **Enhanced TraceExtractor** - Database query methods with date range support
+- **Optimized DatasetBuilder** - Stream processing for large date ranges
+- **Query Performance** - Indexed queries for evaluation criteria filtering
+
+### Benefits
+- **Simplified Workflow**: Eliminate intermediate file extraction step
+- **Date Range Support**: Create datasets spanning multiple days
+- **Better Performance**: Database queries faster than file scanning
+- **Reduced Dependencies**: No reliance on local file storage
+
+### Dependencies
+- Phase 9 (Archive Database Integration) completed
+- Database populated with historical trace data
+- Existing LangSmith integration preserved
+
+## Phase 11: Reporting Database Migration 🚧 PLANNED
+
+**Goal:** Switch reporting to aggregate runs into traces via database queries
+**Success Criteria:** All report commands reconstruct traces from runs using SQL aggregation
+
+### Problem Statement
+Current reporting reads from individual run JSON files which:
+1. Requires all run data to be available locally
+2. Limited to single-date operations for some reports
+3. Slower file scanning for large datasets
+4. Cannot leverage database aggregation optimizations
+
+Migration goals:
+1. All reports aggregate runs by trace_id to reconstruct traces
+2. Maintain existing report formats and output exactly
+3. Preserve command interfaces and behavior
+4. Enable advanced SQL optimizations for better performance
+
+### Features
+
+- [ ] **Update zenrows-errors report** - Database queries for error aggregation `M`
+- [ ] **Update zenrows-detail report** - Database queries for detailed error analysis `M`
+- [ ] **Query optimization** - Efficient aggregation queries with proper indexing `S`
+- [ ] **Report caching** - Optional caching for frequently accessed reports `S`
+- [ ] **Backward compatibility** - Maintain exact output format and behavior `S`
+- [ ] **Performance monitoring** - Query performance tracking and optimization `S`
+- [ ] **Error handling** - Graceful fallback for database connectivity issues `S`
+
+### Command Interface (Unchanged)
+```bash
+# Zenrows error reports (same interface, database backend)
+lse report zenrows-errors --date 2025-09-13 --project my-project
+lse report zenrows-detail --date 2025-09-13 --project my-project
+
+# Output format unchanged
+Date,Total Traces,Zenrows Errors,Error Rate
+2025-09-13,220,10,4.5%
+```
+
+### Technical Implementation
+- **ReportGenerator Updates**: Replace file scanning with database queries
+- **SQL Query Optimization**: Aggregate queries with proper indexing
+- **Caching Layer**: Optional Redis/memory caching for report performance
+- **Connection Management**: Robust database connection handling
+
+### Migration Strategy
+- **Phase 1**: Update zenrows-errors command to use database
+- **Phase 2**: Update zenrows-detail command to use database
+- **Phase 3**: Add query optimizations and caching
+- **Phase 4**: Remove file-based reporting dependencies
+
+### Benefits
+- **Improved Performance**: Database queries faster than file scanning
+- **Enhanced Scalability**: Handle larger datasets efficiently
+- **Future Extensibility**: Foundation for advanced reporting features
+- **Data Consistency**: Single source of truth for all reporting
+
+### Dependencies
+- Phase 9 (Archive Database Integration) completed
+- Database populated with comprehensive trace data
+- Existing report output formats preserved
