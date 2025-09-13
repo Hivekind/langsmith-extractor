@@ -56,6 +56,15 @@ class Settings(BaseSettings):
         description="Password for basic authentication with evaluation API",
     )
 
+    # Database Configuration
+    database_url: str = Field(
+        default="postgresql+asyncpg://lse_user:lse_password@localhost:5432/langsmith_extractor",
+        description="Database connection URL",
+    )
+    database_pool_size: int = Field(default=10, description="Connection pool size")
+    database_pool_timeout: int = Field(default=30, description="Connection timeout in seconds")
+    database_echo: bool = Field(default=False, description="Enable SQL query logging")
+
     # Google Drive Configuration (for archive functionality)
     google_drive_folder_url: Optional[str] = Field(
         default=None,

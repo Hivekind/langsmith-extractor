@@ -67,6 +67,21 @@ This project was developed using modern Python tooling and AI-assisted developme
    # Or use a tool like direnv for automatic loading
    ```
 
+5. **Set up database (optional - for local data storage):**
+   ```bash
+   # Start PostgreSQL database with Docker
+   ./scripts/setup-database.sh
+   
+   # Run database tests to verify setup
+   uv run pytest tests/test_database.py -v
+   
+   # Connect to database for manual inspection
+   docker exec -it lse_postgres psql -U lse_user -d langsmith_extractor
+   
+   # Stop database when done
+   ./scripts/teardown-database.sh
+   ```
+
 ### Running Tests
 
 ```bash
@@ -84,7 +99,19 @@ uv run ruff check --fix .
 uv run ruff format .
 ```
 
-### Complete Archive Workflow Example
+### Complete Workflow Examples
+
+#### Database Management
+
+```bash
+# Complete workflow: fetch → zip → upload → store in database
+uv run lse archive full-sweep --project my-project --date 2024-01-15 --include-children
+
+# Or, load existing archived files to database
+uv run lse archive to-db --project my-project --date 2024-01-15
+```
+
+#### Archive Workflow
 
 Here's how to run through a complete trace archival sequence:
 
@@ -114,6 +141,7 @@ uv run lse archive restore --project my-project --date 2024-01-15
 ## Command Reference
 
 ### Core Commands
+
 
 - `lse report` - Generate analysis reports from stored traces
   - Subcommands: `zenrows-errors` (analyze zenrows scraper failures)

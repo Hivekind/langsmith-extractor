@@ -2,14 +2,17 @@
 
 import json
 import hashlib
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 import httpx
 from langsmith import Client
 from pydantic import BaseModel, Field
 from rich.console import Console
+from sqlalchemy import text
 
 from lse.config import get_settings
+from lse.database import DatabaseManager
 from lse.storage import TraceStorage
 
 console = Console()
@@ -47,15 +50,19 @@ class EvaluationDataset(BaseModel):
 
 
 class TraceExtractor:
-    """Extract suitable traces for evaluation from local storage."""
+    """Extract suitable traces for evaluation from local storage or database."""
 
-    def __init__(self, storage: Optional[TraceStorage] = None):
+    def __init__(
+        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+    ):
         """Initialize the trace extractor.
 
         Args:
-          storage: TraceStorage instance for accessing stored traces
+          storage: TraceStorage instance for accessing stored traces (file-based)
+          database: DatabaseManager instance for accessing database (database-based)
         """
         self.storage = storage or TraceStorage(get_settings())
+        self.database = database
 
     def extract_traces(self, project: str, date: str) -> List[TraceMetadata]:
         """Extract traces that meet filtering criteria from stored run data.
@@ -180,17 +187,125 @@ class TraceExtractor:
 
         return traces
 
+    async def extract_traces_from_db(
+        self,
+        project: str,
+        start_date: str,
+        end_date: Optional[str] = None,
+        eval_type: Optional[str] = None,
+    ) -> List[TraceMetadata]:
+        """Extract traces from database that meet evaluation criteria.
+
+        This method queries runs and aggregates them by trace_id to reconstruct traces.
+
+        Args:
+            project: Project name to extract traces from
+            start_date: Start date in YYYY-MM-DD format (UTC)
+            end_date: End date in YYYY-MM-DD format (UTC), defaults to start_date
+
+        Returns:
+            List of trace metadata meeting evaluation criteria
+        """
+        if not self.database:
+            raise ValueError("DatabaseManager is required for database-based extraction")
+
+        end_date = end_date or start_date
+
+        # Convert string dates to date objects for PostgreSQL compatibility
+        start_date_obj = date.fromisoformat(start_date)
+        end_date_obj = date.fromisoformat(end_date)
+
+        async with self.database.get_session() as session:
+            # Query all runs for the date range, grouped by trace_id
+            result = await session.execute(
+                text("""
+                SELECT 
+                    trace_id, 
+                    project, 
+                    run_date,
+                    array_agg(data ORDER BY created_at) as run_data_array,
+                    COUNT(*) as run_count
+                FROM runs 
+                WHERE project = :project 
+                  AND run_date BETWEEN :start_date AND :end_date
+                  AND trace_id IS NOT NULL
+                GROUP BY trace_id, project, run_date
+                HAVING COUNT(*) >= 1
+                ORDER BY run_date, trace_id
+                """),
+                {"project": project, "start_date": start_date_obj, "end_date": end_date_obj},
+            )
+
+            traces = []
+            for row in result.fetchall():
+                # Aggregate run data to evaluate trace-level criteria
+                trace_evaluation = self._evaluate_trace_from_runs(
+                    row[3], eval_type
+                )  # run_data_array
+
+                if trace_evaluation["meets_criteria"]:
+                    trace_metadata = TraceMetadata(
+                        trace_id=row[0],  # trace_id
+                        project=row[1],  # project
+                        date=row[2].strftime("%Y-%m-%d"),  # run_date
+                        has_ai_output=trace_evaluation["has_ai_output"],
+                        has_human_feedback=trace_evaluation["has_human_feedback"],
+                    )
+                    traces.append(trace_metadata)
+
+            return traces
+
+    def _evaluate_trace_from_runs(
+        self, run_data_array: List[dict], eval_type: Optional[str] = None
+    ) -> dict:
+        """Evaluate a trace based on aggregated run data.
+
+        Args:
+            run_data_array: List of run data JSONB objects belonging to same trace
+
+        Returns:
+            Dict with evaluation results for the trace
+        """
+        has_ai_output = False
+        has_human_feedback = False
+        meets_criteria = False
+
+        # Aggregate evaluation criteria across all runs in the trace
+        for run_data in run_data_array:
+            if self._has_ai_output(run_data):
+                has_ai_output = True
+
+            if self._has_human_feedback(run_data):
+                has_human_feedback = True
+
+            # Check if any run in this trace meets filtering criteria
+            if self._meets_filtering_criteria(run_data, eval_type):
+                meets_criteria = True
+
+        return {
+            "has_ai_output": has_ai_output,
+            "has_human_feedback": has_human_feedback,
+            "meets_criteria": meets_criteria,
+        }
+
     def _has_ai_output(self, trace_data: Dict[str, Any]) -> bool:
         """Check if trace contains AI output.
 
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace contains AI output
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check outputs field at trace level (primary location)
-        trace = trace_data.get("trace", {})
         outputs = trace.get("outputs", {})
         if outputs and isinstance(outputs, dict) and outputs:
             return True
@@ -216,13 +331,20 @@ class TraceExtractor:
         """Check if trace contains human feedback.
 
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace contains human feedback
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check for feedback_stats.final_verdict (primary location for human feedback)
-        trace = trace_data.get("trace", {})
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             return True
@@ -244,19 +366,29 @@ class TraceExtractor:
     def _has_final_verdict_feedback(self, trace_data: Dict[str, Any]) -> bool:
         """Check if trace has final verdict feedback.
 
+        Database format: trace_data["feedback_stats"]["final_verdict"]["comments"][0]
+        File format: trace_data["trace"]["feedback_stats"]["final_verdict"]
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace has final verdict feedback
         """
-        # Check for feedback_stats.final_verdict (primary location)
-        trace = trace_data.get("trace", {})
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
+        # Check for feedback_stats.final_verdict (both database and file format)
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             final_verdict = feedback_stats.get("final_verdict")
             if final_verdict:
-                # Check for comments containing "Human verdict:"
+                # Check for comments containing "Human verdict:" (primary method)
                 comments = final_verdict.get("comments", [])
                 if comments and any("Human verdict:" in str(comment) for comment in comments):
                     return True
@@ -264,7 +396,7 @@ class TraceExtractor:
                 if "verdict" in final_verdict:
                     return True
 
-        # Check for feedback with final_verdict
+        # Check for feedback with final_verdict (fallback)
         feedback = trace_data.get("feedback", [])
         if isinstance(feedback, list):
             for fb in feedback:
@@ -278,19 +410,30 @@ class TraceExtractor:
     def _get_feedback_verdict(self, trace_data: Dict[str, Any]) -> Optional[str]:
         """Extract the verdict from feedback.
 
+        Database format: trace_data["feedback_stats"]["final_verdict"]["comments"][0]
+        File format: trace_data["trace"]["feedback_stats"]["final_verdict"]["comments"][0]
+        Expected format: "Human verdict: {FINAL_VERDICT}"
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           Feedback verdict string (PASS/FAIL) or None if not found
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check for feedback_stats.final_verdict (primary location)
-        trace = trace_data.get("trace", {})
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             final_verdict = feedback_stats.get("final_verdict")
             if final_verdict:
-                # Check for comments containing "Human verdict:"
+                # Check for comments containing "Human verdict:" (primary method)
                 comments = final_verdict.get("comments", [])
                 if comments:
                     for comment in comments:
@@ -304,7 +447,7 @@ class TraceExtractor:
                 if "verdict" in final_verdict:
                     return final_verdict.get("verdict")
 
-        # Check for feedback with final_verdict
+        # Check for feedback with final_verdict (fallback)
         feedback = trace_data.get("feedback", [])
         if isinstance(feedback, list):
             for fb in feedback:
@@ -320,14 +463,29 @@ class TraceExtractor:
     ) -> tuple[Optional[str], Optional[float]]:
         """Extract final_decision and confidence from outputs.
 
+        Database format: trace_data["outputs"]["final_decision"]
+        File format: trace_data["trace"]["outputs"]["final_decision"]
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           Tuple of (final_decision, confidence) or (None, None) if not found
         """
-        trace = trace_data.get("trace", {})
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
+        # Check trace level outputs first (both database and file format)
         outputs = trace.get("outputs", {})
+
+        # Fallback to top-level outputs (alternative structure)
+        if not outputs:
+            outputs = trace_data.get("outputs", {})
 
         if not outputs or outputs is None:
             return None, None
@@ -344,16 +502,19 @@ class TraceExtractor:
 
         return final_decision, confidence
 
-    def _meets_filtering_criteria(self, run_data: Dict[str, Any]) -> bool:
+    def _meets_filtering_criteria(
+        self, run_data: Dict[str, Any], eval_type: Optional[str] = None
+    ) -> bool:
         """Check if a run meets all filtering criteria.
 
-        Current criteria:
+        Current criteria (strict for all eval types):
         1. Must have final verdict feedback
         2. Output final_decision must match feedback verdict (PASS-PASS or FAIL-FAIL)
         3. Confidence must be >= 0.7
 
         Args:
           run_data: Raw run data
+          eval_type: Evaluation type (currently unused, all types use same strict criteria)
 
         Returns:
           True if run meets ALL criteria
@@ -384,13 +545,17 @@ class TraceExtractor:
 class DatasetBuilder:
     """Build evaluation datasets from extracted traces."""
 
-    def __init__(self, storage: Optional[TraceStorage] = None):
+    def __init__(
+        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+    ):
         """Initialize the dataset builder.
 
         Args:
           storage: TraceStorage instance for accessing stored traces
+          database: DatabaseManager instance for accessing database
         """
         self.storage = storage or TraceStorage(get_settings())
+        self.database = database
 
     def build_dataset(
         self,
@@ -421,6 +586,122 @@ class DatasetBuilder:
                 dataset.examples.append(example)
 
         return dataset
+
+    async def create_dataset_from_db(
+        self,
+        project: str,
+        start_date: str,
+        end_date: str,
+        eval_type: str,
+    ) -> EvaluationDataset:
+        """Create evaluation dataset directly from database.
+
+        Args:
+            project: Project name
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            eval_type: Evaluation type for formatting
+
+        Returns:
+            Complete evaluation dataset ready for upload
+        """
+        if not self.database:
+            raise ValueError("DatabaseManager is required for database-based dataset creation")
+
+        # Use the TraceExtractor to get suitable traces
+        extractor = TraceExtractor(database=self.database)
+        trace_metadata = await extractor.extract_traces_from_db(
+            project=project, start_date=start_date, end_date=end_date, eval_type=eval_type
+        )
+
+        # Build dataset examples
+        examples = []
+        async with self.database.get_session() as session:
+            for metadata in trace_metadata:
+                # Get all runs for this trace from database
+                result = await session.execute(
+                    text("""
+                    SELECT data FROM runs 
+                    WHERE trace_id = :trace_id 
+                      AND project = :project 
+                      AND run_date = :date
+                    ORDER BY created_at
+                    """),
+                    {
+                        "trace_id": metadata.trace_id,
+                        "project": metadata.project,
+                        "date": date.fromisoformat(metadata.date),
+                    },
+                )
+
+                run_data_list = [row.data for row in result.fetchall()]
+                if run_data_list:
+                    example = self._build_example_from_runs(
+                        trace_metadata=metadata, run_data_list=run_data_list, eval_type=eval_type
+                    )
+                    if example:
+                        examples.append(example)
+
+        # Create dataset
+        dataset_name = f"{project}_{eval_type}_{start_date}_{end_date}"
+        return EvaluationDataset(
+            name=dataset_name,
+            description=f"Evaluation dataset for {project} from {start_date} to {end_date}",
+            examples=examples,
+        )
+
+    def _build_example_from_runs(
+        self,
+        trace_metadata: TraceMetadata,
+        run_data_list: List[dict],
+        eval_type: Optional[str] = None,
+    ) -> Optional[DatasetExample]:
+        """Build dataset example from database run data.
+
+        Args:
+            trace_metadata: Trace metadata
+            run_data_list: List of run data from database
+            eval_type: Evaluation type for formatting
+
+        Returns:
+            Dataset example or None if trace cannot be processed
+        """
+        try:
+            # Aggregate inputs, outputs, and reference from all runs
+            all_inputs = {}
+            all_outputs = {}
+            all_reference = {}
+
+            for run_data in run_data_list:
+                # Extract inputs (typically from root run only)
+                run_inputs = self._extract_inputs(run_data)
+                self._deep_merge_dict(all_inputs, run_inputs)
+
+                # Extract outputs (from all runs, but prioritize final outputs)
+                run_outputs = self._extract_outputs(run_data)
+                self._deep_merge_dict(all_outputs, run_outputs)
+
+                # Extract reference data (human feedback, verdicts)
+                run_reference = self._extract_reference(run_data)
+                self._deep_merge_dict(all_reference, run_reference)
+
+            return DatasetExample(
+                inputs=all_inputs,
+                outputs=all_outputs,
+                reference=all_reference if all_reference else None,
+                metadata={
+                    "trace_id": trace_metadata.trace_id,
+                    "project": trace_metadata.project,
+                    "date": trace_metadata.date,
+                    "eval_type": eval_type,
+                },
+            )
+
+        except (json.JSONDecodeError, KeyError) as e:
+            console.print(
+                f"[yellow]Error building example for {trace_metadata.trace_id}: {e}[/yellow]"
+            )
+            return None
 
     def _build_example(
         self, metadata: TraceMetadata, eval_type: Optional[str] = None
@@ -786,6 +1067,19 @@ class DatasetBuilder:
         formatted_outputs["has_trademark_conflict"] = bool(has_trademark_conflict)
 
         return formatted_inputs, formatted_outputs, reference
+
+    def _deep_merge_dict(self, target: dict, source: dict) -> None:
+        """Deep merge source dictionary into target dictionary.
+
+        Args:
+            target: Target dictionary to merge into
+            source: Source dictionary to merge from
+        """
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                self._deep_merge_dict(target[key], value)
+            else:
+                target[key] = value
 
 
 class LangSmithUploader:

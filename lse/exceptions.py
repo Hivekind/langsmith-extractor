@@ -23,3 +23,15 @@ class ValidationError(LSEError):
     """Raised when there are input validation errors."""
 
     pass
+
+
+class DataStorageError(LSEError):
+    """Raised when there are database storage errors."""
+
+    pass
+
+
+class DataFetchError(LSEError):
+    """Raised when there are data fetching errors."""
+
+    pass
