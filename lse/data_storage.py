@@ -3,6 +3,7 @@
 import json
 import logging
 from datetime import date
+from decimal import Decimal
 from typing import Any, Dict, List, Optional, Union
 from uuid import UUID
 
@@ -13,6 +14,15 @@ from lse.database import DatabaseManager
 from lse.exceptions import DataStorageError
 
 logger = logging.getLogger(__name__)
+
+
+class DecimalJSONEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles Decimal objects by converting them to strings."""
+
+    def default(self, obj):
+        if isinstance(obj, Decimal):
+            return str(obj)
+        return super().default(obj)
 
 
 class RunDataTransformer:
@@ -53,9 +63,9 @@ class RunDataTransformer:
             "total_tokens": run.total_tokens,
             "prompt_tokens": run.prompt_tokens,
             "completion_tokens": run.completion_tokens,
-            "total_cost": str(run.total_cost) if run.total_cost else None,
-            "prompt_cost": str(run.prompt_cost) if run.prompt_cost else None,
-            "completion_cost": str(run.completion_cost) if run.completion_cost else None,
+            "total_cost": run.total_cost,
+            "prompt_cost": run.prompt_cost,
+            "completion_cost": run.completion_cost,
             "first_token_time": run.first_token_time.isoformat() if run.first_token_time else None,
             "tags": run.tags or [],
             "events": run.events or [],
@@ -65,6 +75,17 @@ class RunDataTransformer:
             "serialized": run.serialized,
             "app_path": run.app_path,
             "manifest_id": str(run.manifest_id) if run.manifest_id else None,
+            # Add missing fields that are critical for evaluation
+            "feedback_stats": getattr(run, "feedback_stats", None),
+            "attachments": getattr(run, "attachments", None) or {},
+            "child_run_ids": [str(cid) for cid in getattr(run, "child_run_ids", None) or []],
+            "child_runs": getattr(run, "child_runs", None),
+            "completion_cost_details": getattr(run, "completion_cost_details", None),
+            "completion_token_details": getattr(run, "completion_token_details", None),
+            "in_dataset": getattr(run, "in_dataset", None),
+            "parent_run_ids": [str(pid) for pid in getattr(run, "parent_run_ids", None) or []],
+            "prompt_cost_details": getattr(run, "prompt_cost_details", None),
+            "prompt_token_details": getattr(run, "prompt_token_details", None),
         }
 
         return {
@@ -72,7 +93,7 @@ class RunDataTransformer:
             "trace_id": str(run.trace_id) if run.trace_id else str(run.id),
             "project": project_name,
             "run_date": run_date,
-            "data": json.dumps(run_data),
+            "data": json.dumps(run_data, cls=DecimalJSONEncoder),
         }
 
 

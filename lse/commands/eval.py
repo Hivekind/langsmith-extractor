@@ -1,5 +1,6 @@
 """Evaluation commands for LangSmith trace analysis."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Optional
@@ -13,8 +14,6 @@ from lse.evaluation import (
     EvaluationAPIClient,
     EvaluationDataset,
     LangSmithUploader,
-    TraceExtractor,
-    TraceMetadata,
 )
 
 app = typer.Typer(help="Evaluation commands for dataset creation and external API integration")
@@ -22,64 +21,39 @@ console = Console()
 
 
 @app.command()
-def extract_traces(
-    date: str = typer.Option(
-        ..., "--date", help="Date in YYYY-MM-DD format (UTC)", show_default=False
-    ),
-    project: str = typer.Option(
-        ..., "--project", help="Project name to extract traces from", show_default=False
-    ),
-    output: str = typer.Option(
-        "/tmp/traces.json", "--output", help="Output JSON file path for trace IDs"
-    ),
-):
-    """Extract trace IDs from local storage that have both AI outputs and human feedback."""
-    extractor = TraceExtractor()
-
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
-    ) as progress:
-        task = progress.add_task(f"Extracting traces from {project} for {date}...")
-
-        traces = extractor.extract_traces(project=project, date=date)
-
-        progress.update(task, completed=True)
-
-    if not traces:
-        console.print("[yellow]No matching traces found[/yellow]")
-        raise typer.Exit(1)
-
-    # Save trace metadata to JSON
-    output_path = Path(output)
-    output_data = {
-        "date": date,
-        "project": project,
-        "trace_count": len(traces),
-        "trace_ids": [t.trace_id for t in traces],
-    }
-
-    with open(output_path, "w") as f:
-        json.dump(output_data, f, indent=2)
-
-    console.print(f"[green]✓[/green] Extracted {len(traces)} traces to {output}")
-    console.print(f"  - Traces with AI output: {sum(1 for t in traces if t.has_ai_output)}")
-    console.print(
-        f"  - Traces with human feedback: {sum(1 for t in traces if t.has_human_feedback)}"
-    )
-
-
-@app.command()
 def create_dataset(
-    traces: str = typer.Option(
-        ..., "--traces", help="Input JSON file from extract-traces command", show_default=False
+    project: str = typer.Option(
+        ..., "--project", help="Project name to create dataset from", show_default=False
     ),
-    output: str = typer.Option("/tmp/dataset.jsonl", "--output", help="Output dataset JSONL file"),
-    name: str = typer.Option(..., "--name", help="Dataset name", show_default=False),
     eval_type: str = typer.Option(
         ..., "--eval-type", help="Evaluation type: 'token_name' or 'website'", show_default=False
     ),
+    date: Optional[str] = typer.Option(
+        None, "--date", help="Single date in YYYY-MM-DD format (UTC)"
+    ),
+    start_date: Optional[str] = typer.Option(
+        None, "--start-date", help="Start date for range in YYYY-MM-DD format (UTC)"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date", help="End date for range in YYYY-MM-DD format (UTC)"
+    ),
+    output: str = typer.Option("/tmp/dataset.jsonl", "--output", help="Output dataset JSONL file"),
+    name: Optional[str] = typer.Option(
+        None, "--name", help="Dataset name (auto-generated if not provided)"
+    ),
 ):
-    """Transform extracted traces into LangSmith dataset format."""
+    """Create evaluation dataset directly from database with date range support.
+
+    This command queries the database to extract suitable traces and creates
+    evaluation datasets. Supports single dates or date ranges.
+
+    Examples:
+      # Single date
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type accuracy
+
+      # Date range
+      lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type accuracy
+    """
     # Validate eval_type parameter
     if eval_type not in ["token_name", "website"]:
         console.print(
@@ -87,37 +61,56 @@ def create_dataset(
         )
         raise typer.Exit(1)
 
-    traces_path = Path(traces)
-
-    if not traces_path.exists():
-        console.print(f"[red]Error: Traces file '{traces}' not found[/red]")
+    # Validate date parameters
+    if date and (start_date or end_date):
+        console.print("[red]Cannot specify both --date and date range options[/red]")
         raise typer.Exit(1)
 
-    # Load trace metadata from JSON
-    with open(traces_path, "r") as f:
-        traces_data = json.load(f)
+    if not date and not start_date:
+        console.print("[red]Must specify either --date or --start-date[/red]")
+        raise typer.Exit(1)
 
-    # Create TraceMetadata objects from trace IDs
-    trace_metadata = [
-        TraceMetadata(trace_id=trace_id, project=traces_data["project"], date=traces_data["date"])
-        for trace_id in traces_data["trace_ids"]
-    ]
+    # Set date range
+    if date:
+        start_date = end_date = date
+    elif start_date and not end_date:
+        end_date = start_date
 
-    # Build dataset
-    builder = DatasetBuilder()
+    # Import here to avoid circular imports and make database optional
+    from lse.database import create_database_manager
 
-    with Progress(
-        SpinnerColumn(), TextColumn("[progress.description]{task.description}"), console=console
-    ) as progress:
-        task = progress.add_task(f"Building dataset from {len(trace_metadata)} traces...")
+    async def create_dataset_async():
+        # Create database-aware dataset builder
+        db_manager = await create_database_manager()
 
-        dataset = builder.build_dataset(
-            trace_metadata=trace_metadata,
-            dataset_name=name,
-            eval_type=eval_type,
-        )
+        try:
+            builder = DatasetBuilder(database=db_manager)
 
-        progress.update(task, completed=True)
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                console=console,
+            ) as progress:
+                task = progress.add_task(f"Creating dataset from database for {project}...")
+
+                dataset = await builder.create_dataset_from_db(
+                    project=project,
+                    start_date=start_date,
+                    end_date=end_date,
+                    eval_type=eval_type,
+                )
+
+                progress.update(task, completed=True)
+
+                # Override dataset name if provided
+                if name:
+                    dataset.name = name
+
+                return dataset
+        finally:
+            await db_manager.close()
+
+    dataset = asyncio.run(create_dataset_async())
 
     # Save dataset to JSONL format (one JSON object per line)
     output_path = Path(output)
@@ -129,7 +122,7 @@ def create_dataset(
             f.write("\n")
 
     console.print(
-        f"[green]✓[/green] Created dataset '{name}' with {len(dataset.examples)} examples"
+        f"[green]✓[/green] Created dataset '{dataset.name}' with {len(dataset.examples)} examples"
     )
     console.print(f"  - Saved to: {output}")
 
