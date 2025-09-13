@@ -3,7 +3,6 @@
 import json
 from datetime import date
 from typing import AsyncGenerator
-import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
@@ -38,7 +37,7 @@ async def db_manager(test_settings: Settings) -> AsyncGenerator[DatabaseManager,
     # Cleanup test data after running tests
     async with manager.get_session() as session:
         await session.execute(text("DELETE FROM runs WHERE run_id LIKE 'test-%'"))
-    
+
     await manager.close()
 
 
@@ -87,7 +86,9 @@ class TestDatabaseManager:
 
     async def test_execute_raw_sql_with_parameters(self, db_manager: DatabaseManager):
         """Test executing raw SQL with parameters."""
-        result = await db_manager.execute_raw_sql("SELECT :value as answer", {"value": "test_param"})
+        result = await db_manager.execute_raw_sql(
+            "SELECT :value as answer", {"value": "test_param"}
+        )
         assert len(result) == 1
         assert result[0][0] == "test_param"
 
@@ -95,16 +96,18 @@ class TestDatabaseManager:
         """Test session automatically commits on success."""
         test_run = {
             "run_id": "test-run-123",
-            "trace_id": "test-trace-123", 
+            "trace_id": "test-trace-123",
             "project": "test-project",
             "run_date": date(2024, 1, 1),
-            "data": json.dumps({
-                "run_id": "test-run-123",
-                "trace_id": "test-trace-123",
-                "project": "test-project", 
-                "run_date": "2024-01-01",
-                "test": "data"
-            }),
+            "data": json.dumps(
+                {
+                    "run_id": "test-run-123",
+                    "trace_id": "test-trace-123",
+                    "project": "test-project",
+                    "run_date": "2024-01-01",
+                    "test": "data",
+                }
+            ),
         }
 
         # Insert test data
@@ -128,10 +131,12 @@ class TestDatabaseManager:
         """Test session automatically rolls back on exception."""
         try:
             async with db_manager.get_session() as session:
-                await session.execute(text("""
+                await session.execute(
+                    text("""
                     INSERT INTO runs (run_id, trace_id, project, run_date, data)
                     VALUES ('test-rollback', 'test-trace-123', 'test-project', '2024-01-01', '{}')
-                """))
+                """)
+                )
                 # Force an exception
                 raise ValueError("Test exception")
         except ValueError:
@@ -251,7 +256,7 @@ class TestRunsTableOperations:
                     {
                         "run_id": "test-run-789-child-1",
                         "trace_id": trace_id,
-                        "project": "test-project", 
+                        "project": "test-project",
                         "run_date": "2024-01-20",
                         "run_type": "llm",
                         "parent_id": trace_id,
@@ -268,7 +273,7 @@ class TestRunsTableOperations:
                         "run_id": "test-run-789-child-2",
                         "trace_id": trace_id,
                         "project": "test-project",
-                        "run_date": "2024-01-20", 
+                        "run_date": "2024-01-20",
                         "run_type": "tool",
                         "parent_id": trace_id,
                     }
@@ -328,7 +333,11 @@ class TestRunsTableOperations:
             "project": project_name,
             "run_date": target_date,
             "data": json.dumps(
-                {"run_id": "test-analytics-run-1", "project": project_name, "run_date": "2024-02-01"}
+                {
+                    "run_id": "test-analytics-run-1",
+                    "project": project_name,
+                    "run_date": "2024-02-01",
+                }
             ),
         }
 
@@ -364,7 +373,7 @@ class TestDatabaseIntegration:
         # Simulate real LangSmith run data
         langsmith_run_data = {
             "run_id": "test-ls-run-123",
-            "trace_id": "test-ls-trace-123", 
+            "trace_id": "test-ls-trace-123",
             "project": "test-customer-support-bot",
             "run_date": date(2024, 3, 1),
             "data": json.dumps(
