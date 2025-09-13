@@ -94,8 +94,8 @@ def archive_fetch(
         console.print(f"[dim]Fetching traces for exact UTC day: {start_dt} to {end_dt}[/dim]")
 
         # Fetch traces with progress
-        with ProgressContext("Fetching root traces"):
-            # Fetch ALL root traces for this exact UTC day (no limit)
+        with ProgressContext("Fetching traces"):
+            # Fetch ALL traces for this exact UTC day (no limit)
             root_runs = client.search_runs(
                 project_name=project,
                 start_time=start_dt.isoformat(),
@@ -107,7 +107,7 @@ def archive_fetch(
             console.print(f"[yellow]No traces found for {project} on {date} (UTC)[/yellow]")
             return
 
-        console.print(f"[green]Found {len(root_runs)} root traces for {date} (UTC)[/green]")
+        console.print(f"[green]Found {len(root_runs)} traces for {date} (UTC)[/green]")
 
         # Always fetch all child runs for each trace (complete hierarchies)
         all_runs = []
@@ -199,7 +199,7 @@ def archive_zip(
             raise typer.Exit(1)
 
         console.print(
-            f"[green]Found {stats['trace_files']} trace files ({stats['total_size_mb']} MB)[/green]"
+            f"[green]Found {stats['run_files']} run files ({stats['total_size_mb']} MB)[/green]"
         )
 
         # Set up output directory
@@ -214,7 +214,7 @@ def archive_zip(
             progress.update(task, completed=1)
 
         console.print(f"[green]✅ Successfully created zip archive: {zip_path}[/green]")
-        console.print(f"[dim]Zip file contains {stats['trace_files']} trace files[/dim]")
+        console.print(f"[dim]Zip file contains {stats['run_files']} run files[/dim]")
 
     except Exception as e:
         logger.error(f"Archive zip failed: {e}")
@@ -591,7 +591,7 @@ def archive_main(
             # Get archive stats
             stats = archive_manager.get_archive_stats(project, date)
             console.print(
-                f"[dim]Archiving {stats['trace_files']} trace files ({stats['total_size_mb']} MB)[/dim]"
+                f"[dim]Archiving {stats['run_files']} run files ({stats['total_size_mb']} MB)[/dim]"
             )
 
             # Create zip
@@ -665,9 +665,9 @@ def archive_to_db(
         help="Project name to load traces for",
     ),
 ) -> None:
-    """Load existing trace files to database.
+    """Load existing run files to database.
 
-    Reads locally stored trace JSON files and stores them in the Postgres database.
+    Reads locally stored run JSON files and stores them in the Postgres database.
     Each JSON file represents one run and will be stored individually in the runs table.
     """
     try:
@@ -694,7 +694,7 @@ def archive_to_db(
             # Check if trace files exist
             trace_folder = archive_manager.get_trace_folder(project, date)
             if not trace_folder.exists():
-                console.print(f"[red]❌ No trace files found for {project} on {date}[/red]")
+                console.print(f"[red]❌ No run files found for {project} on {date}[/red]")
                 console.print(
                     f"[yellow]Run 'lse archive fetch --project {project} --date {date}' first[/yellow]"
                 )
@@ -710,7 +710,7 @@ def archive_to_db(
                 console.print(f"[red]❌ No trace JSON files found in {trace_folder}[/red]")
                 raise typer.Exit(1)
 
-            console.print(f"[green]Found {len(json_files)} trace files to load[/green]")
+            console.print(f"[green]Found {len(json_files)} run files to load[/green]")
 
             # Set up database connection
             db_manager = await create_database_manager(settings)
@@ -718,7 +718,7 @@ def archive_to_db(
 
             # Load runs from JSON files
             runs_data = []
-            console.print("[blue]Reading trace files...[/blue]")
+            console.print("[blue]Reading run files...[/blue]")
 
             with Progress() as progress:
                 task = progress.add_task("Loading files", total=len(json_files))
@@ -917,7 +917,7 @@ def archive_full_sweep(
             start_dt, end_dt = make_date_range_inclusive(date, date)
 
             # Fetch traces
-            with ProgressContext("Fetching root traces"):
+            with ProgressContext("Fetching traces"):
                 root_runs = client.search_runs(
                     project_name=project,
                     start_time=start_dt.isoformat(),
@@ -929,7 +929,7 @@ def archive_full_sweep(
                 console.print(f"[yellow]No traces found for {project} on {date}[/yellow]")
                 return
 
-            console.print(f"[green]Found {len(root_runs)} root traces[/green]")
+            console.print(f"[green]Found {len(root_runs)} traces[/green]")
 
             # Always fetch child runs (complete trace hierarchies)
             all_runs = list(root_runs)
@@ -971,7 +971,7 @@ def archive_full_sweep(
         try:
             stats = archive_manager.get_archive_stats(project, date)
             console.print(
-                f"[dim]Archiving {stats['trace_files']} trace files ({stats['total_size_mb']} MB)[/dim]"
+                f"[dim]Archiving {stats['run_files']} run files ({stats['total_size_mb']} MB)[/dim]"
             )
 
             zip_output_dir = Path("./archives")

@@ -254,7 +254,7 @@ class TraceAnalyzer:
         )
 
         if not trace_files:
-            self.logger.warning("No trace files found for analysis")
+            self.logger.warning("No run files found for analysis")
             return {}
 
         # Parse all trace files

@@ -66,7 +66,7 @@ class ArchiveManager:
 
         if not json_files:
             raise ArchiveError(
-                f"No trace files found in {folder_path}. "
+                f"No run files found in {folder_path}. "
                 "Run 'lse archive fetch' first to fetch traces for this date."
             )
 
@@ -248,7 +248,7 @@ class ArchiveManager:
             return {
                 "exists": True,
                 "folder_path": str(folder_path),
-                "trace_files": len(json_files),
+                "run_files": len(json_files),
                 "summary_files": len(summary_files),
                 "total_size_bytes": total_size,
                 "total_size_mb": round(total_size / (1024 * 1024), 2),
