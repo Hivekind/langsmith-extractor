@@ -221,7 +221,7 @@ class TestDatasetBuilder:
         mock_session.execute.return_value = mock_result
 
         builder = DatasetBuilder(database=mock_db)
-        
+
         # Mock the second execute call for run data fetching
         mock_run_result = Mock()
         mock_run_row = Mock()
@@ -233,9 +233,10 @@ class TestDatasetBuilder:
             "inputs": {"query": "test query"},
         }
         mock_run_result.fetchall.return_value = [mock_run_row]
-        
+
         # Set up mock session to return different results for different calls
         call_count = 0
+
         def mock_execute(*args, **kwargs):
             nonlocal call_count
             call_count += 1
@@ -243,8 +244,9 @@ class TestDatasetBuilder:
                 return mock_result
             else:
                 return mock_run_result
+
         mock_session.execute.side_effect = mock_execute
-        
+
         dataset = await builder.create_dataset_from_db(
             project="test-project",
             start_date="2025-01-01",
