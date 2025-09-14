@@ -986,8 +986,8 @@ def archive_full_sweep(
 
             console.print(f"[green]Found {len(root_runs)} traces[/green]")
 
-            # Always fetch child runs (complete trace hierarchies)
-            all_runs = list(root_runs)
+            # Always fetch child runs (complete trace hierarchies) - using enhanced method
+            all_runs = []
             console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
             with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
                 task_id = progress.add_task("Processing traces", total=len(root_runs))
@@ -999,9 +999,9 @@ def archive_full_sweep(
                         description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
                     )
                     try:
-                        trace_runs = client.fetch_trace_hierarchy(root_run.id)
-                        child_runs = [run for run in trace_runs if run.id != root_run.id]
-                        all_runs.extend(child_runs)
+                        # Fetch complete hierarchy with enhanced feedback (Phase 12)
+                        trace_runs = client.fetch_trace_hierarchy_with_feedback(root_run.id)
+                        all_runs.extend(trace_runs)
                         # Add 1000ms delay to avoid rate limits
                         time.sleep(1.0)
                     except Exception as e:
@@ -1011,9 +1011,9 @@ def archive_full_sweep(
 
                 console.print(f"[green]Total runs including children: {len(all_runs)}[/green]")
 
-            # Save traces
-            with ProgressContext("Saving traces"):
-                saved_paths = storage.save_traces(all_runs, project_name=project)
+            # Save traces (using enhanced storage for Phase 12)
+            with ProgressContext("Saving enhanced traces"):
+                saved_paths = storage.save_enhanced_traces(all_runs, project_name=project)
 
             console.print(f"[green]✓ Step 1 complete: Saved {len(saved_paths)} runs[/green]")
 
