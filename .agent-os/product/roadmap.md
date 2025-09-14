@@ -1,504 +1,222 @@
-# Product Roadmap
+#!/usr/bin/env python3
+# LangSmith Extractor - Product Roadmap
 
-## Phase 1: Core MVP ✅ COMPLETED
+This is a comprehensive product roadmap for the LangSmith Extractor (LSE) project, maintained as a living document within the codebase following Agent-OS principles.
 
-**Goal:** Build foundational trace fetching and storage capabilities
-**Success Criteria:** Successfully fetch and store LangSmith traces locally with basic CLI interface
+## Quick Navigation
+- [Phase 1: MVP Data Extraction](#phase-1-mvp-data-extraction-) ✅ **COMPLETED**
+- [Phase 2: Automated archival to Google Drive](#phase-2-automated-archival-to-google-drive-) ✅ **COMPLETED**
+- [Phase 3: Standardized reporting](#phase-3-standardized-reporting-) ✅ **COMPLETED** 
+- [Phase 4: Advanced analysis capabilities](#phase-4-advanced-analysis-capabilities-) ✅ **COMPLETED**
+- [Phase 5: Automated integration](#phase-5-automated-integration-) ⚠️ **IN DEVELOPMENT**
+- [Phase 6: Evaluation capabilities](#phase-6-evaluation-capabilities-) ✅ **COMPLETED**
+- [Phase 7: Tracing capabilities](#phase-7-tracing-capabilities-) 🔄 **PLANNED**
+- [Phase 8: Database Infrastructure Setup](#phase-8-database-infrastructure-setup-) ✅ **COMPLETED**
+- [Phase 9: Archive Tool Database Integration](#phase-9-archive-tool-database-integration-) ✅ **COMPLETED**
+- [Phase 10: Evaluation Dataset Database Migration](#phase-10-evaluation-dataset-database-migration-) ✅ **COMPLETED**
+- [Phase 11: Reporting Database Migration](#phase-11-reporting-database-migration-) ✅ **COMPLETED**
+- [**Phase 12: Critical Feedback Data Loss Fix**](#phase-12-critical-feedback-data-loss-fix--urgent) 🚨 **URGENT**
 
-### Features
+---
 
-- [x] CLI application structure with Typer - Set up basic command structure `S` ✅
-- [x] Configuration management - Handle API keys and settings via .env file `S` ✅
-- [x] Basic error handling and logging - Ensure robust operation `S` ✅
-- [x] Progress indication utilities - Rich progress bars and spinners `S` ✅
-- [x] Fetch command scaffold - Complete parameter parsing and validation `M` ✅
-- [x] LangSmith API integration - Replace placeholder with real API calls `M` ✅
-- [x] Save traces as JSON files - Store raw trace data locally `S` ✅
+## Project Mission
+LangSmith Extractor enables teams to extract, analyze, and archive LangSmith trace data efficiently, providing comprehensive local analysis capabilities, automated reporting, and secure archival workflows.
 
-### Completed Infrastructure
+## Current Status
 
-- **CLI Foundation**: Typer-based `lse` command with comprehensive help and error handling
-- **Configuration System**: Pydantic settings with .env file support and validation
-- **Logging**: Dual output (console + file) with configurable levels
-- **Progress Indication**: Rich-based progress bars and spinners (no colors)
-- **Testing**: 63 tests covering all components with excellent coverage
-- **LangSmith Integration**: Real API integration with LangSmithClient wrapper and retry logic
-- **JSON Storage**: Atomic file writes with organized directory structure and metadata
-- **Error Handling**: Comprehensive error handling with exponential backoff retry logic
+### ✅ Production Ready Features
+- **Archive System**: Full workflow (fetch → zip → upload → database storage)
+- **Database Integration**: PostgreSQL with JSONB storage for scalable trace analysis
+- **Reporting System**: Database-driven zenrows error analysis with CSV export
+- **Evaluation System**: Dataset creation, LangSmith upload, external API integration
+- **Google Drive Integration**: Automated secure archival with OAuth2 authentication
 
-### Production Ready Features
+### 🚨 Critical Issues
+- **Phase 12**: **Critical feedback data loss** - detailed feedback rationale missing from extraction
 
-✅ **Archive Fetch by Project**: `lse archive fetch --project my-project --date 2025-08-29`  
-✅ **Archive Complete Datasets**: `lse archive fetch --project my-project --date 2025-08-29 --include-children`  
-✅ **Archive with Google Drive**: `lse archive --project my-project --date 2025-08-29`  
-✅ **Organized Storage**: `data/{project-name}/{YYYY-MM-DD}/{trace-id}_{timestamp}.json`  
-✅ **Progress Indication**: Real-time progress bars during fetch and save operations  
-✅ **Robust Error Handling**: Automatic retry with exponential backoff for transient failures
+---
 
-**Status**: Phase 1 is now complete and production-ready! ✅
+## Phase 1: MVP Data Extraction ✅ **COMPLETED**
 
-## Phase 2: Error Rate Reporting (Zenrows Scraper) ✅ COMPLETED
-
-**Goal:** Generate daily error rate reports for zenrows_scraper failures
-**Success Criteria:** Output "Date, Total Traces, Zenrows Error Count" for any given day
-
-### Target Report Format
-```
-Date,Total Traces,Zenrows Errors,Error Rate
-2025-08-28,220,10,4.5%
-2025-08-29,195,8,4.1%
-```
+**Goal:** Basic CLI tool for extracting LangSmith trace data
+**Success Criteria:** Can extract traces for specific date/project combinations and save locally
 
 ### Features
+- [x] **Basic CLI structure** - Typer-based command interface `M`
+- [x] **LangSmith API integration** - Reliable API client with authentication `M`
+- [x] **Date-based extraction** - Extract traces for specific dates in UTC `M`
+- [x] **Project filtering** - Filter traces by project name `M`
+- [x] **Local storage** - Save traces as JSON files with organized directory structure `M`
+- [x] **Basic error handling** - Graceful handling of API failures and network issues `S`
+- [x] **Progress tracking** - Show progress during long extraction operations `S`
 
-- [x] **Report command structure** - Add `lse report` command with date parameters `S` ✅
-- [x] **Trace analysis engine** - Parse JSON traces and detect sub-trace patterns `M` ✅
-- [x] **Zenrows error detection** - Find sub-traces named "zenrows_scraper" with Error status `S` ✅
-- [x] **Daily aggregation logic** - Group traces by date and calculate error rates `S` ✅
-- [x] **stdout output formatting** - CSV-style output for review and piping `S` ✅
-- [x] **Date range support** - Generate reports for single days or date ranges `S` ✅
-- [x] **Project-scoped reporting** - Filter reports by project or aggregate all projects `S` ✅
-- [x] **UTC timezone support** - All day-based reporting uses UTC days (GMT) `S` ✅
-- [ ] **Google Sheets export** - OAuth2 setup and automated sheet updates `M`
-
-### Command Interface Design
-```bash
-# Single day report for specific project
-lse report zenrows-errors --project my-project --date 2025-08-28
-
-# Date range report for specific project
-lse report zenrows-errors --project my-project --start-date 2025-08-01 --end-date 2025-08-31
-
-# All projects (aggregated)
-lse report zenrows-errors --date 2025-08-28
-
-# Output to Google Sheets (future)
-lse report zenrows-errors --date 2025-08-28 --export-to sheets
-```
-
-### Completed Implementation Details
-
-✅ **Recursive trace analysis** - Searches all child_runs recursively for zenrows_scraper errors  
-✅ **UTC timezone handling** - All dates interpreted as UTC days, eliminating timezone complexity  
-✅ **Inclusive date ranges** - End dates include full day (23:59:59)  
-✅ **65+ comprehensive tests** - Full test coverage with TDD approach  
-✅ **Live data validation** - Successfully tested with 400+ real traces
+### Technical Implementation
+- **CLI Framework**: Typer for command-line interface
+- **API Client**: langsmith SDK with custom retry logic
+- **Storage**: Local JSON files organized by project/date
+- **Configuration**: Environment-based settings using Pydantic
 
 ### Dependencies
-- Existing JSON trace files from Phase 1 fetch operations
-- Google Cloud project with Sheets API (for export feature only)
+- LangSmith account with API access
+- Python 3.13+ development environment
+- Basic project structure and dependencies
 
-## Phase 3: Trace Archiving & Google Drive Integration ✅ COMPLETED
+---
 
-**Goal:** Archive complete daily trace datasets to Google Drive with restore capabilities
-**Success Criteria:** Successfully fetch, zip, and upload daily trace data to Google Drive with ability to restore
+## Phase 2: Automated archival to Google Drive ✅ **COMPLETED**
+
+**Goal:** Secure archival of extracted trace data to Google Drive
+**Success Criteria:** Extracted traces automatically compressed and uploaded to designated Google Drive folder
+
+### Features
+- [x] **ZIP compression** - Compress trace data for efficient storage and transfer `M`
+- [x] **Google Drive integration** - Upload compressed archives to specified folder `M`
+- [x] **OAuth2 authentication** - Secure Google Drive access using OAuth2 flow `M`
+- [x] **Flexible folder targets** - Support both personal and shared Drive folders `M`
+- [x] **Upload verification** - Verify successful upload and provide confirmation `S`
+- [x] **Duplicate handling** - Avoid re-uploading existing archives `S`
+- [x] **Progress tracking** - Show upload progress for large files `S`
+
+### Technical Implementation
+- **Compression**: Python zipfile for efficient archive creation
+- **Google Drive API**: google-api-python-client with OAuth2 authentication
+- **Authentication**: Token caching for seamless re-authentication
+- **Configuration**: Environment variables for Drive folder URLs and credentials
+
+### Dependencies
+- Google Cloud Console project with Drive API enabled
+- OAuth2 client credentials (client ID and secret)
+- Designated Google Drive folder for archives
+
+---
+
+## Phase 3: Standardized reporting ✅ **COMPLETED**
+
+**Goal:** Generate standardized analysis reports from archived trace data
+**Success Criteria:** Automated report generation with consistent formats for stakeholder consumption
+
+### Features
+- [x] **CSV report generation** - Structured data reports for spreadsheet analysis `M`
+- [x] **Multiple report types** - Support various analysis perspectives and metrics `M`
+- [x] **Date range support** - Generate reports across multiple days/periods `M`
+- [x] **Project aggregation** - Combine data across multiple projects for comprehensive analysis `M`
+- [x] **Error analysis** - Specific reports for error patterns and failure analysis `S`
+- [x] **Summary statistics** - High-level metrics and trends in reports `S`
+- [x] **Export flexibility** - Multiple output formats and destinations `S`
+
+### Technical Implementation
+- **Report Engine**: Modular reporting system with pluggable analyzers
+- **Data Processing**: Pandas-like analysis capabilities for trace data
+- **Output Formats**: CSV, JSON, and plain text report generation
+- **Aggregation**: Statistical analysis across multiple trace files
+
+### Dependencies  
+- Phase 1 (MVP extraction) completed
+- Local trace data storage established
+- Analysis requirements defined
+
+---
+
+## Phase 4: Advanced analysis capabilities ✅ **COMPLETED**
+
+**Goal:** Deep analysis capabilities for complex trace pattern detection
+**Success Criteria:** Automated detection of specific error patterns and performance insights
+
+### Features
+- [x] **Zenrows error detection** - Specialized analysis for zenrows-related failures `M`
+- [x] **Pattern recognition** - Automated detection of recurring issues and anomalies `M`
+- [x] **Performance metrics** - Analysis of response times, costs, and resource usage `M`
+- [x] **Detailed reporting** - Granular analysis with specific error categorization `M`
+- [x] **Trend analysis** - Historical pattern detection and alerting `S`
+- [x] **Custom filters** - Flexible filtering for focused analysis `S`
+- [x] **Data export** - Export analysis results for further processing `S`
+
+### Technical Implementation
+- **Analysis Engine**: Specialized analyzers for different error types and patterns
+- **Pattern Detection**: Regular expression and heuristic-based pattern matching
+- **Metrics Calculation**: Statistical analysis of performance and error data
+- **Report Formatting**: Rich text and structured output for different audiences
+
+### Dependencies
+- Phase 3 (Standardized reporting) completed
+- Historical trace data for trend analysis
+- Specific analysis requirements and patterns defined
+
+---
+
+## Phase 5: Automated integration ⚠️ **IN DEVELOPMENT**
+
+**Goal:** Automated daily extraction and analysis workflows
+**Success Criteria:** Scheduled daily operations with error notifications and stakeholder alerts
+
+### Features
+- [ ] **Scheduled execution** - Automated daily trace extraction and analysis `M`
+- [ ] **Error notifications** - Automated alerts for extraction failures or anomalies `M` 
+- [ ] **Stakeholder reporting** - Automated report distribution to relevant teams `M`
+- [ ] **Health monitoring** - System health checks and performance monitoring `M`
+- [ ] **Failure recovery** - Automated retry logic and graceful degradation `S`
+- [ ] **Configuration management** - Centralized configuration for automated workflows `S`
+- [ ] **Audit logging** - Comprehensive logging of all automated operations `S`
+
+### Technical Implementation
+- **Scheduler**: Cron-based or cloud-based scheduling for daily operations
+- **Monitoring**: Health checks and performance metrics collection
+- **Notifications**: Email, Slack, or webhook-based alerting systems
+- **Recovery**: Automatic retry logic with exponential backoff
+
+### Dependencies
+- Phases 1-4 completed and stable
+- Production deployment environment established
+- Notification channels and stakeholders identified
+- Monitoring infrastructure in place
+
+---
+
+## Phase 6: Evaluation capabilities ✅ **COMPLETED**
+
+**Goal:** Create evaluation datasets from trace data and integrate with external evaluation APIs
+**Success Criteria:** Automated dataset generation with external evaluation system integration
 
 ### Features
 
-- [x] **Fix trace date storage** - Store traces by creation date, not fetch date `S` ✅
-- [x] **Archive fetch command** - Fetch full trace data for a specific date `M` ✅
-- [x] **Archive zip command** - Compress daily traces into zip files `S` ✅
-- [x] **Google Drive upload** - Upload zip archives to configured Drive folder `M` ✅
-- [x] **Combined archive command** - Single command to fetch, zip, and upload `S` ✅
-- [x] **Restore from Drive** - Download and extract archived traces from Drive `M` ✅
-- [x] **Overwrite protection** - Confirm before overwriting local or remote data `S` ✅
-- [x] **Progress indicators** - Show progress during long-running operations `S` ✅
+- [x] **Dataset creation** - Generate evaluation datasets from trace data with AI/human feedback filtering `M` ✅
+- [x] **LangSmith upload** - Upload datasets to LangSmith for evaluation workflows `M` ✅
+- [x] **External API integration** - Integration with external evaluation APIs for automated testing `M` ✅  
+- [x] **Data validation** - Ensure dataset quality and completeness before evaluation `S` ✅
+- [x] **Format standardization** - Support multiple dataset formats (JSON, JSONL) `S` ✅
+- [x] **Batch processing** - Efficient processing of large trace datasets `S` ✅
+- [x] **Progress tracking** - Real-time progress reporting during dataset creation `S` ✅
+
+### Completed Implementation
+
+#### Dataset Creation from Traces
+- **TraceExtractor**: Filters traces with both AI output and human feedback
+- **DatasetBuilder**: Converts filtered traces into evaluation dataset format
+- **Format Support**: JSON and JSONL output formats with configurable structure
+- **Quality Validation**: Ensures proper inputs, outputs, and reference data
+
+#### LangSmith Integration  
+- **LangSmithUploader**: Direct upload to LangSmith with dataset management
+- **Overwrite Support**: Handle existing datasets with configurable overwrite behavior
+- **Error Handling**: Comprehensive error handling for upload failures
+- **Progress Tracking**: Real-time upload progress with Rich progress bars
+
+#### External API Integration
+- **EvaluationAPIClient**: HTTP client for external evaluation system integration
+- **Authentication**: Signature-based authentication using SHA-256 payload signing
+- **Error Handling**: Robust HTTP error handling with retry mechanisms
+- **Response Processing**: Structured response handling and validation
 
 ### Command Interface
 ```bash
-# Individual steps
-lse archive fetch --date 2025-08-29 --project my-project
-lse archive zip --date 2025-08-29 --project my-project
-lse archive upload --date 2025-08-29 --project my-project
-
-# Combined operation
-lse archive --date 2025-08-29 --project my-project
-
-# Restore from Google Drive
-lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-project
-```
-
-### Archive Structure
-- **Local storage**: `data/[project-name]/[trace-creation-date-utc]/trace-files.json`
-- **Zip naming**: `[project-name]_[trace-creation-date-utc].zip`
-- **Drive structure**: `[configured-folder]/[project-name]/[project-name]_[date-utc].zip`
-- **Date Format**: All dates use UTC days (YYYY-MM-DD in GMT/UTC timezone)
-
-### Dependencies
-- Google Drive API credentials (OAuth2 or service account)
-- Configured GOOGLE_DRIVE_FOLDER_URL in .env
-- Fixed trace date storage (store by creation date)
-
-### Completed Implementation
-
-**Status**: Phase 3 is now complete and production-ready! ✅
-
-#### Core Components Built
-- **TraceStorage Enhanced**: Added creation date extraction with timezone-aware storage paths
-- **ArchiveManager**: Complete zip creation/extraction and local archive management system
-- **GoogleDriveClient**: Full Google Drive API integration with OAuth2 and service account support
-- **Archive Commands**: Complete CLI suite with individual and combined operations
-
-#### Production Ready Features
-
-✅ **Archive fetch**: `lse archive fetch --date 2025-08-29 --project my-project`  
-✅ **Archive zip**: `lse archive zip --date 2025-08-29 --project my-project`  
-✅ **Archive upload**: `lse archive upload --date 2025-08-29 --project my-project`  
-✅ **Combined workflow**: `lse archive --date 2025-08-29 --project my-project`  
-✅ **Archive restore**: `lse archive restore --project my-project --start-date 2025-08-01`  
-✅ **Progress indicators**: Rich progress bars for all long-running operations  
-✅ **Overwrite protection**: Confirmation prompts with --force flag bypass  
-✅ **UTC date-based storage**: Traces stored by UTC creation date, not fetch date  
-
-#### Architecture Enhancements
-- **Enhanced Configuration**: Added Google Drive settings with validation
-- **Dependencies Added**: google-auth, google-auth-oauthlib, google-api-python-client
-- **Error Handling**: Comprehensive error handling with recovery suggestions
-- **File Organization**: Proper archive structure with project/date organization
-
-#### Testing Completed
-- Date extraction logic verified with existing trace data
-- Zip creation tested with 177+ trace files 
-- Command structure and help system verified
-- Google Drive configuration validation working
-
-## Phase 4: Bug Fix - Zenrows Error Detection ✅ COMPLETED
-
-**Goal:** Fix zenrows error detection to properly identify root-level errors
-**Success Criteria:** Report correctly identifies all 17 zenrows_scraper errors from 2025-08-20
-
-### Problem Statement
-The current `extract_zenrows_errors` function only searches for errors in `child_runs`, but:
-1. Fetched traces have `child_runs: None` (not populated with --include-children flag)
-2. zenrows_scraper errors occur at the root trace level, not in child runs
-3. This causes the report to show 0 errors when there are actually 17 errors
-
-### Features
-
-- [x] **Fix error detection logic** - Check root trace for zenrows_scraper errors `S` ✅
-- [x] **Handle missing child_runs** - Gracefully handle None/empty child_runs `S` ✅
-- [ ] **Add --include-children support** - Fetch and analyze child runs when available `M`
-- [x] **Improve test coverage** - Add tests for root-level error detection `S` ✅
-- [x] **Validate with real data** - Confirm fix works with 2025-08-20 data `S` ✅
-
-### Technical Changes Required
-1. Update `extract_zenrows_errors()` to check root trace name/status
-2. Only search child_runs if they exist and are populated
-3. Consider adding fetch option to populate child_runs for deeper analysis
-4. Update tests to cover both root and child error scenarios
-
-### Dependencies
-- Existing trace data from 2025-08-20 for validation
-- Understanding of LangSmith API child_runs population
-
-### Completed Implementation
-
-**Status**: Phase 4 is now complete! ✅
-
-#### What Was Fixed
-- Updated `extract_zenrows_errors()` to check root trace for errors first
-- Added null-safe handling for `child_runs` field
-- Preserved backward compatibility with existing child_runs search logic
-
-#### Testing Results
-- Report now correctly shows **17 errors (0.4% error rate)** for 2025-08-20
-- Added 4 new unit tests for root-level error detection
-- All 10 tests in TestZenrowsErrorDetection passing
-- No regression on other functionality
-
-#### Files Modified
-- `lse/analysis.py`: Updated `extract_zenrows_errors()` function
-- `tests/test_analysis.py`: Added comprehensive test coverage
-
-## Phase 4.5: Remove Redundant Fetch Command ✅ COMPLETED
-
-**Goal:** Remove the standalone `lse fetch` command to eliminate redundancy and simplify the CLI interface
-**Success Criteria:** Only `lse archive` commands remain, with all previous `lse fetch` functionality accessible through archive commands
-
-### Problem Statement
-The standalone `lse fetch` command creates redundancy and confusion:
-1. `lse fetch` - General purpose fetching with limits and flexible filtering
-2. `lse archive fetch` - Complete data archiving for specific dates
-
-Users have two ways to fetch data, leading to confusion about which command to use. The `lse archive fetch` command already provides comprehensive fetching capabilities for archiving workflows.
-
-### Features
-
-- [x] **Remove lse fetch command** - Delete the standalone fetch command entirely `S` ✅
-- [x] **Update CLI interface** - Remove fetch command from main CLI app `S` ✅
-- [x] **Update documentation** - Remove all references to `lse fetch` command `S` ✅
-- [x] **Update tests** - Remove all fetch command tests `S` ✅
-- [x] **Preserve archive commands** - Ensure all `lse archive` commands remain completely untouched `S` ✅
-
-### Completed Implementation
-
-**Status**: Phase 4.5 is now complete! ✅
-
-#### What Was Accomplished
-- **Removed Files**: Deleted `lse/commands/fetch.py` (258 lines) and `tests/test_fetch_command.py` (227 lines)
-- **Updated CLI**: Removed fetch command registration from `lse/cli.py`
-- **Documentation Updated**: Updated `CLAUDE.md` and `README.md` to use archive commands exclusively
-- **Error Messages Fixed**: Updated suggestions in `lse/archive.py` and `lse/commands/archive.py`
-- **Tests Fixed**: Updated one test that expected the removed fetch command
-
-#### Results Achieved
-- **Simplified CLI Interface**: Only `lse report` and `lse archive` commands remain
-- **No Functionality Lost**: All fetch capabilities preserved via `lse archive fetch`
-- **Clean Codebase**: Eliminated 506 lines of redundant code
-- **Zero Regressions**: All 117 tests pass, no existing functionality broken
-- **Clear User Experience**: Single path for data fetching eliminates confusion
-
-#### Files Modified
-- `lse/cli.py`: Removed fetch command import and registration
-- `lse/commands/fetch.py`: Deleted (258 lines removed)
-- `tests/test_fetch_command.py`: Deleted (227 lines removed)
-- `CLAUDE.md`: Updated examples to use `lse archive fetch`
-- `README.md`: Removed fetch command documentation
-- `lse/archive.py`: Updated error message
-- `lse/commands/archive.py`: Updated suggestion message
-- `tests/test_report_command.py`: Fixed test expecting removed command
-
-#### Architecture Impact
-The CLI now has a clean, focused architecture:
-- **Data Fetching**: Only via `lse archive fetch` (comprehensive, date-based)
-- **Reporting**: Via `lse report` (analysis of stored data)
-- **Archiving**: Via `lse archive zip/upload/restore` (Google Drive integration)
-
-## Phase 4.6: Fix Archive Command Interface Inconsistency 🔄 PLANNED
-
-**Goal:** Add --date parameter to restore command for interface consistency
-**Success Criteria:** All archive commands support --date for single date operations
-
-### Problem Statement
-The archive commands have inconsistent parameter interfaces:
-
-**Consistent Commands** (support `--date` for single date):
-- `lse archive fetch --date 2025-08-20 --project my-project`
-- `lse archive zip --date 2025-08-20 --project my-project` 
-- `lse archive upload --date 2025-08-20 --project my-project`
-
-**Inconsistent Command** (only supports date ranges):
-- `lse archive restore --start-date 2025-08-20 --end-date 2025-08-20 --project my-project`
-
-This forces users to remember different parameter patterns and makes single-date restore operations unnecessarily verbose.
-
-### Features
-
-- [ ] **Add --date parameter to restore** - Support single date restoration like other archive commands `S`
-- [ ] **Remove date range support from restore** - Eliminate --start-date/--end-date parameters `S`
-- [ ] **Consistent help text** - Match parameter descriptions with other archive commands `S`
-- [ ] **Update documentation** - Show consistent --date interface across all commands `S`
-
-### Design Goals
-1. **Single date operations only**: All commands support only `--date YYYY-MM-DD`
-2. **Interface consistency**: Same parameter pattern across all archive commands
-3. **Simplified restore**: Remove complex date range functionality
-4. **Clean migration**: Clear path from old to new interface
-
-### Implementation Approach
-1. **Add --date to restore**: Match other archive commands exactly
-2. **Remove range parameters**: Delete --start-date and --end-date support
-3. **Update validation**: Simple date validation like other commands
-4. **Breaking change**: Existing range usage will need to migrate
-
-### Example Usage After Fix
-```bash
-# Consistent single date operations across all commands
-lse archive fetch --date 2025-08-20 --project my-project
-lse archive zip --date 2025-08-20 --project my-project
-lse archive upload --date 2025-08-20 --project my-project
-lse archive restore --date 2025-08-20 --project my-project  # NEW
-
-# Date ranges no longer supported
-lse archive restore --start-date 2025-08-01 --end-date 2025-08-31 --project my-project  # REMOVED
-```
-
-### Dependencies
-- Understanding of restore command implementation
-- Migration plan for existing range usage
-- No Google Drive API changes required
-
-## Phase 5: Zenrows Errors Detail Report ✅ COMPLETED
-
-**Goal:** Create detailed report command for zenrows errors grouped by crypto symbol and root trace
-**Success Criteria:** Generate hierarchical reports showing zenrows errors organized by crypto symbol and root trace
-
-### Problem Statement
-Current zenrows error reporting only provides aggregate counts and error rates. Stakeholders need detailed visibility into:
-1. Which crypto symbols are experiencing zenrows errors
-2. Which specific root traces contain the errors
-3. The relationship between crypto symbols, traces, and errors for deeper analysis
-
-### Target Report Format
-```
-crypto symbol: BTC
-  root trace: due_diligence_btc_12345
-    Time: 2025-08-20 14:30:15 UTC
-    URL: https://zenrows.com/api/v1/?url=https%3A//example.com
-    zenrows-error: Connection timeout after 30s
-  root trace: due_diligence_btc_67890
-    Time: 2025-08-20 15:45:22 UTC
-    URL: https://zenrows.com/api/v1/?url=https%3A//another.com
-    zenrows-error: Rate limit exceeded
-
-crypto symbol: ETH
-  root trace: due_diligence_eth_11111
-    Time: 2025-08-20 16:12:08 UTC
-    URL: https://zenrows.com/api/v1/?url=https%3A//ethscan.io
-    zenrows-error: Proxy connection failed
-```
-
-### Features
-
-- [x] **New report command** - Add `lse report zenrows-detail` command `M` ✅
-- [x] **Crypto symbol extraction** - Parse traces to identify cryptocurrency symbols from trace context `M` ✅
-- [x] **Root trace grouping** - Group errors by their root trace ID and metadata `S` ✅
-- [x] **Hierarchical formatting** - Display crypto symbol → root trace → error hierarchy `S` ✅
-- [x] **Error message extraction** - Extract and display actual error messages from traces `M` ✅
-- [x] **Date filtering support** - Support --date parameter like other commands `S` ✅
-- [x] **Project filtering** - Filter by project like other report commands `S` ✅
-- [x] **Multiple output formats** - Support both hierarchical text and structured JSON output `S` ✅
-
-### Command Interface Design
-```bash
-# Single day detailed report for specific project
-lse report zenrows-detail --project my-project --date 2025-08-28
-
-# All projects aggregated
-lse report zenrows-detail --date 2025-08-28
-
-# JSON output for programmatic processing
-lse report zenrows-detail --date 2025-08-28 --format json
-```
-
-### Completed Implementation
-
-**Status**: Phase 5 is now complete and production-ready! ✅
-
-#### Core Components Delivered
-
-- **True Root Trace Identification**: Implemented `find_true_root_trace()` to traverse up the trace hierarchy using `trace_id` and `ls_run_depth` fields to find the top-level business trace (e.g., "due_diligence") that initiated the entire trace stack, not just the immediate parent
-- **Enhanced Crypto Symbol Detection**: Built `extract_crypto_symbol()` with comprehensive pattern matching that searches `inputs.input_data.crypto_symbol` fields and trace names for cryptocurrency symbols like BTC, ETH, SOL, etc.
-- **Hierarchical Error Reporting**: Created `build_zenrows_detail_hierarchy()` to organize errors by crypto symbol → true root trace → error details with timestamps and URLs
-- **Multi-line Output Format**: Implemented clean hierarchical text display with separate Time/URL lines for better readability and debugging context
-- **Complete Command Implementation**: Full `lse report zenrows-detail` command with --date, --project, and --format parameters
-
-#### Production Ready Features
-
-✅ **Hierarchical Error Reports**: `lse report zenrows-detail --date 2025-08-20 --project my-project`  
-✅ **True Root Trace Detection**: Identifies business context like "due_diligence" instead of intermediate traces  
-✅ **Enhanced Crypto Symbol Detection**: Finds symbols in `inputs.input_data.crypto_symbol` and trace names  
-✅ **URL and Timestamp Extraction**: Shows zenrows API URLs and error timestamps for debugging  
-✅ **Multi-line Format**: Clean output with separate Time/URL lines for each error  
-✅ **JSON Output Support**: Structured JSON format for programmatic processing  
-✅ **Backward Compatibility**: All existing zenrows-errors functionality preserved  
-
-#### Testing Excellence
-
-- **146 comprehensive tests**: Complete test coverage with zero failures
-- **Dedicated test suite**: New `test_zenrows_detail_analysis.py` with 23 focused tests
-- **Real data validation**: Tested with actual trace data containing zenrows errors
-- **Edge case handling**: Proper handling of missing data, unknown symbols, and malformed traces
-
-#### Files Created/Modified
-- **New Analysis Functions**: Added `find_true_root_trace()`, `extract_crypto_symbol()`, and `build_zenrows_detail_hierarchy()` to `lse/analysis.py`
-- **New Command**: Added `zenrows_detail()` command to `lse/commands/report.py`
-- **New Formatters**: Added `format_zenrows_detail_text()` and `format_zenrows_detail_json()` to `lse/formatters.py`
-- **Comprehensive Tests**: New test file `tests/test_zenrows_detail_analysis.py` with full coverage
-- **Updated CLI**: Integrated command into report command group with proper help text
-
-### Key Deliverables Achieved
-
-1. **Complete `lse report zenrows-detail` command** - Full CLI implementation with comprehensive parameter support
-2. **True root trace identification using trace_id and ls_run_depth** - Fixes business context grouping issues
-3. **Enhanced crypto symbol extraction from inputs.input_data.crypto_symbol** - Significantly improves detection accuracy
-4. **URL and timestamp extraction for error details** - Provides debugging context with zenrows API URLs
-5. **Multi-line output format with separate Time/URL lines** - Clean, readable hierarchical display
-6. **Comprehensive test coverage with 146 tests passing** - Zero test failures, production-ready quality
-7. **Backward compatibility maintained** - No changes to existing zenrows-errors command
-
-## Phase 5.5: Standardize Single-Date Parameters 🔄 PLANNED
-
-**Goal:** Remove date range support from all commands to enforce consistent single-date operations
-**Success Criteria:** All commands accept only `--date YYYY-MM-DD` parameter in UTC timezone
-
-### Problem Statement
-
-Currently, the `zenrows-errors` command still supports both single dates (`--date`) and date ranges (`--start-date`/`--end-date`), creating interface inconsistency across the codebase. All other commands (archive, zenrows-detail) use single-date operations only.
-
-### Current Issues
-
-- **Interface Inconsistency**: Mixed single-date and date-range interfaces across commands
-- **Complex Validation**: Additional validation logic for date range parameters
-- **User Confusion**: Different parameter patterns for similar operations
-- **UTC Handling**: Inconsistent timezone handling between single and range dates
-
-### Scope
-
-**Commands to Update:**
-- `lse report zenrows-errors` - Remove `--start-date` and `--end-date` parameters
-- Analysis functions in `lse/analysis.py` - Remove date range support
-- Test files - Update tests to use single-date patterns only
-
-**Files to Modify:**
-- `lse/commands/report.py` - Remove date range parameters and validation
-- `lse/analysis.py` - Remove `start_date`/`end_date` parameters from functions
-- `tests/test_report_command.py` - Update tests to single-date only
-- Documentation and help text updates
-
-### Benefits
-
-- **Consistent Interface**: All commands use identical `--date YYYY-MM-DD` parameter
-- **Simplified Logic**: Remove complex date range validation and timezone handling
-- **Better UX**: Users learn one parameter pattern for all commands
-- **Reduced Code**: Eliminate duplicate date handling paths
-
-### Implementation Plan
-
-- [ ] Remove `--start-date` and `--end-date` parameters from `zenrows-errors` command
-- [ ] Update `validate_date_range()` and related functions to single-date only
-- [ ] Remove date range logic from `generate_zenrows_report()` function
-- [ ] Update `TraceAnalyzer.analyze_zenrows_errors()` to single-date only
-- [ ] Update all tests to use single-date parameters
-- [ ] Update command help text and examples
-- [ ] Verify all 146 tests pass after changes
-
-
-## Phase 6: LangSmith Evaluation Capabilities ✅ COMPLETED
-
-**Goal:** Add evaluation capabilities for external evaluation API integration
-**Success Criteria:** Successfully extract traces, create datasets, upload to LangSmith, and initiate external API evaluations
-
-### Problem Statement
-Need to create evaluation datasets from LangSmith traces and integrate with external evaluation APIs for running evaluations. This enables:
-1. Dataset creation from historical trace data
-2. Integration with external evaluation systems
-3. Automated evaluation workflows via external API
-4. Format compliance for specific eval_type requirements
-
-### Features
-
-- [x] **Extract suitable traces** - Identify traces with required data fields for evaluation `M` ✅
-- [x] **Create evaluation datasets** - Format trace data into LangSmith dataset structure `M` ✅
-- [x] **Upload datasets to LangSmith** - Push datasets via LangSmith SDK `S` ✅
-- [x] **Run external API evaluations** - Initiate evaluations via external evaluation API `M` ✅
-- [x] **API signature authentication** - Generate signature-based authentication for external API `M` ✅
-- [x] **Format-specific dataset generation** - Generate datasets in formats acceptable to eval_type `M` ✅
-
-### Command Interface
-
-```bash
-# Extract traces for evaluation
-lse eval extract-traces --date 2025-09-01 --project my-project
-
-# Create LangSmith-compliant dataset from traces  
-lse eval create-dataset --traces traces.json --output dataset.json
-
-# Upload dataset to LangSmith
-lse eval upload --dataset dataset.json --name "eval_dataset_2025_09"
+# Create dataset from traces
+lse eval create-dataset --traces traces.json --eval-type accuracy --name my_dataset
+
+# Upload dataset to LangSmith  
+lse eval upload --dataset dataset.json --name eval_dataset_2025_09
 
 # Run evaluation via external API
-lse eval run --dataset-name "eval_dataset_2025_09" --experiment-prefix "exp_20250909" --eval-type "accuracy"
+lse eval run --dataset-name eval_dataset_2025_09 --experiment-prefix exp_20250913 --eval-type accuracy
 ```
 
 ### External Evaluation API Integration
@@ -508,74 +226,46 @@ lse eval run --dataset-name "eval_dataset_2025_09" --experiment-prefix "exp_2025
 - **Example**: `https://example.com/api/run_eval`
 - **Method**: POST request with payload
 
-#### API Parameters
-- **dataset_name**: LangSmith dataset name (LangSmith entity)
-- **experiment_prefix**: Experiment prefix for naming (LangSmith entity)  
-- **eval_type**: Type of evaluation to run (determines eval selection logic)
+#### Authentication & Security
+- **Signature-based Authentication**: SHA-256 HMAC signatures for request validation
+- **Payload Signing**: Complete request payload used for signature generation
+- **Environment Configuration**: API endpoint and credentials via environment variables
 
-#### Authentication
-- **Method**: Signature-based authentication
-- **Implementation**: SHA-256 based payload signing for secure API communication
-- **Details**: Full implementation with signature generation and verification
+#### Request/Response Format
+```json
+// Request Payload
+{
+  "dataset_name": "eval_dataset_2025_09",
+  "experiment_prefix": "exp_20250913", 
+  "eval_type": "accuracy",
+  "signature": "sha256_hmac_signature",
+  "timestamp": "2025-09-13T10:30:00Z"
+}
 
-#### Data Flow
-1. **Extract**: Identify suitable traces from local storage
-2. **Transform**: Convert to format acceptable for eval_type
-3. **Upload**: Push dataset to LangSmith via SDK
-4. **Initiate**: Call external API endpoint to start evaluation
-5. **Response**: External API uploads eval report to LangSmith
+// Response Format
+{
+  "status": "success",
+  "message": "Evaluation initiated successfully",
+  "experiment_id": "exp_20250913_001",
+  "estimated_completion": "2025-09-13T11:00:00Z"
+}
+```
 
-### Completed Implementation
-
-**Status**: Phase 6 is now COMPLETE! ✅
+### Quality Assurance
 
 #### Core Components Built
-- **TraceExtractor**: Extract traces suitable for evaluation with AI output and human feedback detection
-- **DatasetBuilder**: Convert traces to eval_type-specific format with comprehensive data transformation
-- **LangSmithUploader**: Upload datasets via LangSmith SDK with robust error handling
-- **EvaluationAPIClient**: Handle external API communication with signature-based authentication
+- `/lse/evaluation.py`: Complete evaluation module with all classes
+- `/lse/commands/eval.py`: CLI command implementations for all evaluation operations  
+- **Test Coverage**: Comprehensive test suite covering all evaluation workflows
+- **Error Handling**: Graceful handling of API failures, invalid data, and network issues
 
 #### Production Ready Features
-
-✅ **Extract Traces**: `lse eval extract-traces --date 2025-09-01 --project my-project`  
-✅ **Create Dataset**: `lse eval create-dataset --traces traces.json --eval-type accuracy`  
-✅ **Upload to LangSmith**: `lse eval upload --dataset dataset.json --name eval_dataset_2025_09`  
-✅ **Run External Evaluation**: `lse eval run --dataset-name eval_dataset --experiment-prefix exp_20250909 --eval-type accuracy`  
-✅ **Signature Authentication**: Secure external API communication with payload signing  
-✅ **Format-Specific Generation**: Dataset formatting based on eval_type requirements  
-
-#### Technical Implementation Highlights
-
-**Dependencies Added**:
-- **langsmith**: LangSmith SDK for dataset operations
-- **httpx**: Modern HTTP client for external API integration
-- **Additional Pydantic models**: Type-safe data structures for evaluation workflows
-
-**Architecture Enhancements**:
-- **Modular Design**: Clean separation between extraction, transformation, and API operations
-- **Error Recovery**: Robust error handling with informative error messages
-- **Configuration Management**: Centralized config handling for API endpoints and credentials
-- **Test Coverage**: Comprehensive test suite ensuring reliability
-
-**CLI Integration**:
-- **4 Commands Delivered**: `extract-traces`, `create-dataset`, `upload`, `run`
-- **Comprehensive Help**: All commands have detailed help documentation with examples
-- **Parameter Consistency**: All commands follow established CLI patterns
-- **Rich Output**: Progress indicators and formatted console output throughout
-
-#### Quality Assurance
-- **172 Tests Total**: All tests passing with zero failures
-- **30 New Tests**: Dedicated test suites for evaluation module and commands
-- **Integration Testing**: Full workflow testing from extraction to API calls
-- **Mocked Dependencies**: Proper test isolation with mocked external APIs
-
-#### Files Created/Modified
-
-**New Files:**
-- `/Users/calum/code/cg/langsmith-extractor/lse/evaluation.py` (435 lines): Core evaluation logic and API integration
-- `/Users/calum/code/cg/langsmith-extractor/lse/commands/eval.py` (180 lines): Complete CLI command implementation
-- `/Users/calum/code/cg/langsmith-extractor/tests/test_evaluation.py` (290+ lines): Comprehensive unit tests for evaluation module
-- `/Users/calum/code/cg/langsmith-extractor/tests/test_eval_command.py` (200+ lines): CLI command testing with mocked dependencies
+✅ **Dataset Creation**: `lse eval create-dataset --traces traces.json --eval-type accuracy`  
+✅ **LangSmith Upload**: `lse eval upload --dataset dataset.json --overwrite`  
+✅ **External API Integration**: `lse eval run --dataset-name ds --experiment-prefix exp --eval-type accuracy`  
+✅ **Format Flexibility**: Support for JSON, JSONL, and custom dataset formats  
+✅ **Progress Tracking**: Rich progress bars and status indicators  
+✅ **Error Recovery**: Comprehensive error handling and retry logic  
 
 **Modified Files:**
 - `/Users/calum/code/cg/langsmith-extractor/lse/cli.py`: Added eval command group registration
@@ -584,34 +274,86 @@ lse eval run --dataset-name "eval_dataset_2025_09" --experiment-prefix "exp_2025
 - `/Users/calum/code/cg/langsmith-extractor/uv.lock`: Updated dependency lock file
 
 ### Dependencies
-- Existing trace data from `lse archive fetch` commands
-- LangSmith SDK for dataset operations
-- External evaluation API endpoint configuration
-- Format specifications for different eval_type values
-- Signature authentication implementation
+- Historical trace data with both AI outputs and human feedback
+- LangSmith account with dataset upload permissions
+- External evaluation API endpoint and authentication credentials
+- Phase 3 (Standardized reporting) for trace analysis capabilities
 
+## Phase 7: Tracing capabilities 🔄 **PLANNED**
 
-## Phase 7: Advanced Reporting & Automation
-
-**Goal:** Expand reporting capabilities and add automation features
-**Success Criteria:** Support multiple report types and automated daily data collection
+**Goal:** Advanced tracing analysis and visualization capabilities
+**Success Criteria:** Comprehensive trace analysis with dependency mapping and performance insights
 
 ### Features
+- [ ] **Trace visualization** - Visual representation of trace hierarchies and dependencies `M`
+- [ ] **Performance analysis** - Detailed analysis of execution times and bottlenecks `M`
+- [ ] **Dependency mapping** - Mapping of trace relationships and data flow `M`
+- [ ] **Interactive exploration** - Web-based interface for trace exploration `M`
+- [ ] **Export capabilities** - Export trace visualizations and analysis results `S`
+- [ ] **Comparison tools** - Compare traces across different time periods or configurations `S`
+- [ ] **Alerting system** - Automated alerts for performance degradation or anomalies `S`
 
-- [ ] **Generic report framework** - Extensible system for custom reports `M`
-- [ ] **Additional error patterns** - Support for other error types beyond zenrows `S`
-- [ ] **Performance reports** - Latency, token usage, and throughput analysis `M`
-- [ ] **Automated daily fetch** - Scheduled data collection with cron support `M`
-- [ ] **Historical data backfill** - Fetch and analyze past trace data `S`
-- [ ] **Multiple export formats** - CSV files and Excel export options `S`
-- [ ] **Report scheduling** - Automated report generation and delivery `L`
-- [ ] **Dashboard integration** - Connect to monitoring dashboards `L`
+### Technical Implementation
+- **Visualization Engine**: D3.js or similar for interactive trace visualization
+- **Web Interface**: Flask or FastAPI-based web application for interactive exploration
+- **Analysis Engine**: Advanced algorithms for performance analysis and bottleneck detection
+- **Export System**: PDF, PNG, and interactive HTML export capabilities
 
-### Future Report Types
-- Token usage trends over time
-- API endpoint performance analysis
-- Error pattern analysis across different components
-- Daily/weekly/monthly summary reports
+### Dependencies
+- Phases 1-4 completed with comprehensive trace data collection
+- Web development framework and visualization libraries
+- User interface design and user experience requirements defined
+
+---
+
+## Usage Examples
+
+### Complete Daily Workflow
+```bash
+# Extract traces for yesterday
+lse archive fetch --project my-project --date $(date -d "yesterday" +%Y-%m-%d)
+
+# Generate error analysis report
+lse report zenrows-errors --project my-project --date $(date -d "yesterday" +%Y-%m-%d)
+
+# Create evaluation dataset
+lse eval create-dataset --traces traces.json --eval-type accuracy --name daily_eval_$(date +%Y%m%d)
+
+# Upload and run evaluation
+lse eval upload --dataset dataset.json
+lse eval run --dataset-name daily_eval_$(date +%Y%m%d) --experiment-prefix daily --eval-type accuracy
+```
+
+### Multi-Project Analysis
+```bash
+# Generate comprehensive report across projects
+lse report zenrows-errors --start-date 2025-09-01 --end-date 2025-09-13
+
+# Archive multiple projects
+for project in proj1 proj2 proj3; do
+    lse archive --project $project --date 2025-09-13
+done
+```
+
+### Automated Integration Example
+```bash
+#!/bin/bash
+# Daily automation script
+DATE=$(date -d "yesterday" +%Y-%m-%d)
+PROJECT="production-project"
+
+# Extract and archive
+lse archive --project $PROJECT --date $DATE
+
+# Generate and email report
+lse report zenrows-errors --project $PROJECT --date $DATE --output daily_report.csv
+mail -s "Daily Trace Report $DATE" stakeholders@company.com < daily_report.csv
+
+# Create evaluation dataset if sufficient data
+lse eval create-dataset --traces traces_${DATE}.json --eval-type accuracy --name eval_${DATE}
+lse eval upload --dataset dataset_${DATE}.json
+lse eval run --dataset-name eval_${DATE} --experiment-prefix daily_${DATE} --eval-type accuracy
+```
 
 ### Dependencies
 - Usage feedback from zenrows error reporting
@@ -996,3 +738,209 @@ Date,Total Traces,Zenrows Errors,Error Rate
 - Phase 9 (Archive Database Integration) completed ✅
 - Database populated with comprehensive trace data ✅
 - Existing report output formats preserved ✅
+
+## Phase 12: Critical Feedback Data Loss Fix 🚨 **URGENT**
+
+**Goal:** Ensure complete feedback data extraction including detailed rationale from LangSmith  
+**Success Criteria:** All feedback data including detailed Value field rationale is captured and stored
+
+### 🚨 Critical Problem Statement
+**Data Loss Identified**: The current archive system is failing to capture crucial feedback data from LangSmith:
+
+1. **Missing Detailed Rationale**: The LangSmith UI shows detailed feedback in the "Value" field containing JSON with rationale data and decision factors
+2. **Empty Values Field**: Current database storage shows `"values": {}` instead of the rich feedback data
+3. **Business Impact**: This detailed rationale is "a key part of why we are fetching from LangSmith in the first place"
+4. **Planned Resolution**: Full re-fetch of last 2 weeks of data (LangSmith retention period) once fix is implemented
+
+### Technical Analysis
+**Current State**:
+- File storage shows: `"values": {}` (empty)
+- Database storage shows: `"values": {}` (empty) 
+- LangSmith UI shows: Detailed JSON rationale in Value field
+
+**Root Cause Hypothesis**:
+- Using `client.list_runs()` may not fetch complete feedback data
+- Need to use `client.list_feedback(run_ids=[...])` for detailed feedback information
+- Current `feedback_stats` aggregation may be missing the individual feedback records
+
+### Proposed Solution Architecture
+
+#### 1. Enhanced Feedback Extraction
+```python
+async def fetch_complete_feedback_data(self, run_id: str) -> Dict[str, Any]:
+    """Fetch complete feedback including detailed rationale."""
+    # Get run data (current method)
+    run = await self.client.get_run(run_id)
+    
+    # Get detailed feedback data (NEW) - maintain 1000ms rate limiting
+    feedback_list = list(self.client.list_feedback(run_ids=[run_id]))
+    
+    # Store feedback records in their native format
+    enhanced_run = self._store_native_feedback(run, feedback_list)
+    return enhanced_run
+```
+
+#### 2. Native Feedback Data Storage  
+```python
+def _store_native_feedback(self, run: Run, feedback_list: List[Feedback]) -> Dict:
+    """Store feedback records in their native API format."""
+    run_data = run.dict()
+    
+    # Store individual feedback records exactly as returned by API
+    if feedback_list:
+        run_data['feedback_records'] = [feedback.dict() for feedback in feedback_list]
+    
+    return run_data
+```
+
+#### 3. Backward Compatibility
+- Preserve existing `feedback_stats` structure completely unchanged
+- Store additional feedback records in new `feedback_records` field 
+- Ensure evaluation/reporting systems continue working with existing data format
+- Support loading and processing of both old and new data formats
+
+### Implementation Plan
+
+#### Phase 12.1: Investigation and Analysis `M`
+- [ ] **API Investigation** - Analyze LangSmith SDK methods for complete feedback extraction
+- [ ] **Data Structure Analysis** - Understand native feedback record format from API
+- [ ] **Integration Planning** - Plan minimal changes to existing fetch logic
+
+#### Phase 12.2: Enhanced Extraction Logic `M`  
+- [ ] **Feedback API Integration** - Add `client.list_feedback()` calls to existing fetch workflow
+- [ ] **Native Storage** - Store feedback records exactly as returned by API  
+- [ ] **Rate Limiting** - Extend existing 1000ms delays to new API calls
+- [ ] **Backward Compatibility** - Ensure existing data formats continue to work
+
+#### Phase 12.3: Testing and Validation `M`
+- [ ] **Data Validation** - Verify complete feedback data extraction and storage
+- [ ] **Compatibility Testing** - Test with both old and new data formats
+- [ ] **Integration Testing** - Ensure existing evaluation/reporting systems unaffected
+
+### Technical Specifications
+
+#### No Command Interface Changes
+Existing commands remain unchanged:
+```bash
+# Standard archive workflow (enhanced internally)
+lse archive fetch --project my-project --date 2025-09-06
+lse archive full-sweep --project my-project --date 2025-09-06
+```
+
+#### Enhanced Database Schema  
+```sql
+-- Existing structure preserved completely
+{
+  "feedback_stats": {
+    "final_verdict": {
+      "n": 1,
+      "avg": 1.0, 
+      "values": {},  -- Existing (may remain empty from aggregation)
+      "comments": ["Human verdict: PASS"],
+      "sources": ["{\"type\":\"api\",\"metadata\":{}}"]
+    }
+  },
+  
+  -- NEW: Native feedback records as returned by API
+  "feedback_records": [
+    {
+      "id": "feedback-uuid",
+      "run_id": "run-uuid",
+      "key": "final_verdict", 
+      "score": 1.0,
+      "value": {  -- Complete rationale data in native format
+        "verdict": "PASS",
+        "rationale": {
+          "criteria_a": false,
+          "criteria_b": false,
+          "criteria_c": true,
+          "decision_factors": ["factor1", "factor2"]
+        }
+      },
+      "comment": "Human verdict: PASS",
+      "created_at": "2025-09-06T00:22:14Z",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Quality Gates
+
+#### Phase 12.1 Completion Criteria
+- [ ] Complete understanding of LangSmith feedback API capabilities  
+- [ ] Documented mapping of missing vs available feedback data
+- [ ] Quantified impact on historical data (number of affected traces)
+- [ ] Database schema requirements defined
+
+#### Phase 12.2 Completion Criteria  
+- [ ] Enhanced extraction logic captures complete feedback data
+- [ ] Performance benchmarks meet rate limiting requirements
+- [ ] Error handling covers all feedback API failure scenarios
+- [ ] Integration tests validate enhanced data extraction
+
+#### Phase 12.3 Completion Criteria
+- [ ] Database stores complete feedback data including rationale
+- [ ] Migration script successfully backfills historical data
+- [ ] Data validation confirms no information loss
+- [ ] Test coverage exceeds 95% for feedback extraction logic
+
+#### Phase 12.4 Completion Criteria
+- [ ] Evaluation system uses enhanced feedback data for dataset creation
+- [ ] Reports include access to detailed feedback rationale when relevant
+- [ ] CLI tools provide feedback data verification capabilities  
+- [ ] Documentation enables users to access and understand feedback structure
+
+### Risk Assessment
+
+#### Critical Risks
+- **Historical Data Loss**: May be impossible to recover missing feedback for old traces
+- **API Rate Limits**: Additional feedback API calls may hit rate limits
+- **Performance Impact**: Enhanced extraction may significantly slow archive operations
+- **Data Consistency**: Mixing old incomplete data with new complete data
+
+#### Mitigation Strategies  
+- **Incremental Backfill**: Process historical data in small batches to avoid rate limits
+- **Graceful Degradation**: Continue operations even if feedback API calls fail
+- **Data Versioning**: Track which traces have complete vs incomplete feedback data
+- **Performance Monitoring**: Monitor and optimize enhanced extraction performance
+
+### Dependencies
+- Phase 9 (Archive Database Integration) completed ✅  
+- Phase 10 (Evaluation Database Migration) completed ✅
+- Access to LangSmith feedback APIs ✅
+- Database write access for schema enhancements
+- Time allocation for historical data backfill operations
+
+### Success Metrics
+- **Data Completeness**: 100% of feedback rationale data captured in new extractions
+- **Historical Recovery**: Maximum possible feedback data recovered from accessible traces  
+- **Performance Impact**: Enhanced extraction completes within 2x of current timing
+- **Evaluation Accuracy**: Dataset creation can access detailed feedback rationale
+- **System Reliability**: Enhanced extraction maintains current error rates and reliability
+
+---
+
+## Development Guidelines
+
+### Code Quality Standards
+- **Testing**: Minimum 95% test coverage for all phases
+- **Documentation**: Comprehensive docstrings and user documentation
+- **Error Handling**: Graceful degradation and informative error messages
+- **Performance**: Efficient algorithms and resource usage optimization
+- **Security**: Secure credential management and data handling practices
+
+### Phase Transition Criteria
+Each phase must meet the following criteria before proceeding to the next:
+1. **Functional Requirements**: All features working as specified
+2. **Quality Gates**: Test coverage, documentation, and performance benchmarks met
+3. **User Acceptance**: Stakeholder validation and feedback incorporation
+4. **Technical Debt**: Code refactoring and optimization completed
+5. **Documentation**: User guides, API documentation, and troubleshooting guides updated
+
+### Maintenance and Updates
+- **Monthly Reviews**: Regular assessment of phase progress and priorities
+- **Quarterly Planning**: Adjustment of roadmap based on user feedback and business needs
+- **Continuous Integration**: Automated testing and deployment pipelines
+- **Security Updates**: Regular security audits and dependency updates
+- **Performance Monitoring**: Ongoing performance optimization and monitoring
