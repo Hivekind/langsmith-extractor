@@ -312,7 +312,7 @@ class TraceExtractor:
 
         # Check outputs field at root level (backup)
         outputs = trace_data.get("outputs", {})
-        if outputs:
+        if outputs and isinstance(outputs, dict):
             # Look for common AI output fields
             ai_fields = ["ai_recommendation", "response", "output", "completion"]
             for field in ai_fields:
@@ -322,7 +322,7 @@ class TraceExtractor:
         # Check for outputs in run tree
         if "run" in trace_data:
             run_outputs = trace_data["run"].get("outputs", {})
-            if run_outputs:
+            if run_outputs and isinstance(run_outputs, dict):
                 return True
 
         return False
@@ -355,10 +355,12 @@ class TraceExtractor:
             return True
 
         # Check for feedback in specific fields
-        if "human_verdict" in trace_data.get("outputs", {}):
+        outputs = trace_data.get("outputs", {})
+        if outputs and isinstance(outputs, dict) and "human_verdict" in outputs:
             return True
 
-        if "human_feedback" in trace_data.get("reference", {}):
+        reference = trace_data.get("reference", {})
+        if reference and isinstance(reference, dict) and "human_feedback" in reference:
             return True
 
         return False

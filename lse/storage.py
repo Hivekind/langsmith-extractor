@@ -284,6 +284,130 @@ class TraceStorage:
         logger.info(f"Successfully saved {len(saved_paths)} traces")
         return saved_paths
 
+    def save_enhanced_traces(
+        self,
+        enhanced_runs: List[Dict[str, Any]],
+        project_name: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> List[Path]:
+        """Save multiple enhanced trace dictionaries to JSON files.
+
+        This method handles run dictionaries with feedback_records (Phase 12).
+
+        Args:
+            enhanced_runs: List of enhanced run dictionaries with feedback_records
+            project_name: Project name for organization
+            timestamp: Base timestamp for file naming
+
+        Returns:
+            List of paths to saved files
+
+        Raises:
+            StorageError: If any save operation fails
+        """
+        saved_paths = []
+        failed_saves = []
+
+        for i, run_dict in enumerate(enhanced_runs):
+            try:
+                # Use slight timestamp offset for each file to avoid conflicts
+                file_timestamp = timestamp or datetime.now()
+                if i > 0:
+                    # Add microseconds to ensure unique timestamps, but cap at 999999
+                    microsecond_offset = min(i * 1000, 999999)
+                    file_timestamp = file_timestamp.replace(microsecond=microsecond_offset)
+
+                # Use save_enhanced_trace method
+                path = self.save_enhanced_trace(run_dict, project_name, file_timestamp)
+                saved_paths.append(path)
+
+            except StorageError as e:
+                run_id = run_dict.get("id", "unknown")
+                failed_saves.append((run_id, str(e)))
+                logger.error(f"Failed to save enhanced trace {run_id}: {e}")
+
+        # Create summary metadata file
+        if saved_paths:
+            self._create_summary_file(saved_paths, project_name, failed_saves)
+
+        if failed_saves:
+            raise StorageError(
+                f"Failed to save {len(failed_saves)} out of {len(enhanced_runs)} enhanced traces. "
+                f"Successfully saved: {len(saved_paths)}"
+            )
+
+        logger.info(f"Successfully saved {len(saved_paths)} enhanced traces")
+        return saved_paths
+
+    def save_enhanced_trace(
+        self,
+        run_dict: Dict[str, Any],
+        project_name: Optional[str] = None,
+        timestamp: Optional[datetime] = None,
+    ) -> Path:
+        """Save a single enhanced run dictionary to a JSON file.
+
+        Args:
+            run_dict: Enhanced run dictionary with feedback_records
+            project_name: Project name for file organization
+            timestamp: Specific timestamp for file naming
+
+        Returns:
+            Path to saved file
+
+        Raises:
+            StorageError: If save operation fails
+        """
+        try:
+            # Get run details from dictionary
+            run_id = run_dict.get("id", "unknown")
+            start_time = run_dict.get("start_time")
+
+            # Convert start_time to datetime if it's a string
+            if isinstance(start_time, str):
+                from datetime import datetime as dt
+
+                try:
+                    creation_date = dt.fromisoformat(start_time.replace("Z", "+00:00"))
+                except ValueError:
+                    creation_date = datetime.now()
+            elif hasattr(start_time, "date"):
+                creation_date = start_time
+            else:
+                creation_date = datetime.now()
+
+            # Create output directory structure using existing method
+            output_dir = self._get_storage_path(project_name, creation_date)
+            self._ensure_directory(output_dir)
+
+            # Generate filename with timestamp
+            file_timestamp = timestamp or datetime.now()
+            filename = f"{run_id}_{file_timestamp.strftime('%H%M%S')}.json"
+            file_path = output_dir / filename
+
+            # Prepare enhanced data with metadata wrapper
+            file_data = {
+                "metadata": {
+                    "extracted_at": file_timestamp.isoformat(),
+                    "project_name": project_name,
+                    "run_id": str(run_id),
+                    "extractor_version": "0.1.0",
+                    "trace_creation_date": creation_date.isoformat(),
+                    "enhanced_feedback": True,  # Flag indicating Phase 12 enhancement
+                },
+                "trace": run_dict,  # Enhanced run dictionary with feedback_records
+            }
+
+            # Write to file atomically
+            self._write_json_atomic(file_path, file_data)
+
+            logger.debug(f"Successfully saved enhanced trace {run_id} to {file_path}")
+            return file_path
+
+        except Exception as e:
+            run_id = run_dict.get("id", "unknown")
+            raise StorageError(f"Failed to save enhanced trace {run_id}: {e}") from e
+
     def _write_json_atomic(self, file_path: Path, data: Dict[str, Any]) -> None:
         """Write JSON data atomically using temporary file.
 

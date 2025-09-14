@@ -200,6 +200,159 @@ class LangSmithClient:
         except Exception as e:
             raise APIError(f"Failed to fetch trace hierarchy for {trace_id}: {e}") from e
 
+    @with_retry()
+    def fetch_run_with_feedback(self, run_id: Union[str, UUID]) -> Dict[str, Any]:
+        """Fetch a single run with enhanced feedback data.
+
+        Args:
+            run_id: The run ID to fetch
+
+        Returns:
+            Enhanced run data with feedback records in native format
+
+        Raises:
+            APIError: If the run or feedback cannot be fetched
+        """
+        try:
+            # Fetch the base run data
+            run = self.fetch_run(run_id)
+            run_data = run.dict()
+
+            # Fetch feedback records for this run
+            feedback_records = self._fetch_feedback_records([str(run_id)])
+
+            # Store feedback records in native format if any exist
+            if feedback_records:
+                run_data["feedback_records"] = feedback_records
+                logger.debug(f"Added {len(feedback_records)} feedback records to run {run_id}")
+
+            return run_data
+
+        except Exception as e:
+            # If feedback fetching fails, return the base run data
+            logger.warning(f"Failed to fetch feedback for run {run_id}: {e}")
+            return self.fetch_run(run_id).dict()
+
+    @with_retry()
+    def fetch_trace_hierarchy_with_feedback(
+        self, trace_id: Union[str, UUID]
+    ) -> List[Dict[str, Any]]:
+        """Fetch all runs in a trace hierarchy with enhanced feedback data.
+
+        Args:
+            trace_id: The trace ID to fetch all runs for
+
+        Returns:
+            List of enhanced run data dictionaries with feedback records
+
+        Raises:
+            APIError: If the fetch fails
+        """
+        try:
+            # Fetch the trace hierarchy
+            trace_runs = self.fetch_trace_hierarchy(trace_id)
+
+            if not trace_runs:
+                return []
+
+            # Convert runs to dictionaries
+            enhanced_runs = [run.dict() for run in trace_runs]
+
+            # Get all run IDs for batch feedback fetching
+            run_ids = [str(run.id) for run in trace_runs]
+
+            # Fetch feedback records for all runs in the trace
+            feedback_records = self._fetch_feedback_records(run_ids)
+
+            if feedback_records:
+                # Group feedback by run_id for efficient lookup
+                feedback_by_run = {}
+                for feedback in feedback_records:
+                    run_id = str(feedback.get("run_id", ""))
+                    if run_id not in feedback_by_run:
+                        feedback_by_run[run_id] = []
+                    feedback_by_run[run_id].append(feedback)
+
+                # Add feedback records to corresponding runs
+                for run_data in enhanced_runs:
+                    run_id = str(run_data.get("id", ""))
+                    if run_id in feedback_by_run:
+                        run_data["feedback_records"] = feedback_by_run[run_id]
+                        logger.debug(
+                            f"Added {len(feedback_by_run[run_id])} feedback records to run {run_id}"
+                        )
+
+            logger.debug(
+                f"Enhanced {len(enhanced_runs)} runs with feedback data for trace {trace_id}"
+            )
+            return enhanced_runs
+
+        except Exception as e:
+            # If feedback enhancement fails, return basic trace data
+            logger.warning(f"Failed to enhance trace {trace_id} with feedback: {e}")
+            trace_runs = self.fetch_trace_hierarchy(trace_id)
+            return [run.dict() for run in trace_runs]
+
+    def _fetch_feedback_records(self, run_ids: List[str]) -> List[Dict[str, Any]]:
+        """Fetch feedback records for the given run IDs.
+
+        Args:
+            run_ids: List of run IDs to fetch feedback for
+
+        Returns:
+            List of feedback records in native API format
+
+        Note:
+            This method includes rate limiting (1000ms delay) and graceful error handling.
+        """
+        if not run_ids:
+            return []
+
+        try:
+            # Apply rate limiting (1000ms delay as per existing pattern)
+            import time
+
+            time.sleep(1.0)
+
+            # Fetch feedback using the native LangSmith API
+            feedback_items = list(self.client.list_feedback(run_ids=run_ids))
+
+            # Convert feedback objects to dictionaries (native format)
+            feedback_records = []
+            for feedback in feedback_items:
+                try:
+                    feedback_dict = {
+                        "id": str(feedback.id),
+                        "run_id": str(feedback.run_id),
+                        "key": feedback.key,
+                        "score": feedback.score,
+                        "value": feedback.value,
+                        "comment": feedback.comment,
+                        "correction": feedback.correction,
+                        "feedback_source_type": feedback.feedback_source.type
+                        if feedback.feedback_source
+                        else None,
+                        "created_at": feedback.created_at.isoformat()
+                        if feedback.created_at
+                        else None,
+                        "modified_at": feedback.modified_at.isoformat()
+                        if feedback.modified_at
+                        else None,
+                    }
+                    feedback_records.append(feedback_dict)
+                except Exception as e:
+                    logger.warning(f"Failed to serialize feedback {feedback.id}: {e}")
+                    continue
+
+            logger.debug(
+                f"Fetched {len(feedback_records)} feedback records for {len(run_ids)} runs"
+            )
+            return feedback_records
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch feedback records: {e}")
+            return []
+
     def get_client_info(self) -> Dict[str, Any]:
         """Get client configuration information for debugging.
 

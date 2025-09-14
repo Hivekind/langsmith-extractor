@@ -35,6 +35,7 @@ class LangSmithDataFetcher:
         end_date: Optional[str] = None,
         limit: Optional[int] = None,
         include_children: bool = False,
+        include_feedback: bool = True,
     ) -> Dict[str, Any]:
         """Fetch runs from LangSmith and store them in the database.
 
@@ -44,6 +45,7 @@ class LangSmithDataFetcher:
             end_date: End date filter (ISO format)
             limit: Maximum number of root runs to fetch
             include_children: Whether to fetch child runs for each trace
+            include_feedback: Whether to include feedback records (Phase 12 enhancement)
 
         Returns:
             Dictionary with fetch and storage results
@@ -76,37 +78,88 @@ class LangSmithDataFetcher:
 
             logger.info(f"Found {len(root_runs)} root runs")
 
-            all_runs = list(root_runs)
             root_count = len(root_runs)
 
-            # Optionally fetch child runs for each trace
-            if include_children:
-                logger.info("Fetching child runs for traces...")
+            # Choose extraction method based on feedback inclusion (Phase 12)
+            if include_feedback:
+                logger.info("Using enhanced extraction with feedback records...")
+                all_enhanced_runs = []
+
+                # Process each root run with enhanced feedback extraction
                 for root_run in root_runs:
-                    if root_run.trace_id:
+                    if root_run.trace_id and include_children:
                         try:
-                            # Fetch complete trace hierarchy
-                            trace_runs = self.client.fetch_trace_hierarchy(str(root_run.trace_id))
-                            # Add only the child runs (exclude root run we already have)
-                            child_runs = [run for run in trace_runs if run.id != root_run.id]
-                            all_runs.extend(child_runs)
+                            # Fetch complete trace hierarchy with feedback
+                            enhanced_trace_runs = self.client.fetch_trace_hierarchy_with_feedback(
+                                str(root_run.trace_id)
+                            )
+                            all_enhanced_runs.extend(enhanced_trace_runs)
                             logger.debug(
-                                f"Added {len(child_runs)} child runs for trace {root_run.trace_id}"
+                                f"Enhanced {len(enhanced_trace_runs)} runs for trace {root_run.trace_id}"
                             )
                         except Exception as e:
                             logger.warning(
-                                f"Failed to fetch children for trace {root_run.trace_id}: {e}"
+                                f"Failed to fetch enhanced trace {root_run.trace_id}: {e}"
                             )
+                            # Fallback: add just the root run without feedback
+                            all_enhanced_runs.append(root_run.dict())
+                    else:
+                        try:
+                            # Fetch single run with feedback
+                            enhanced_run = self.client.fetch_run_with_feedback(str(root_run.id))
+                            all_enhanced_runs.append(enhanced_run)
+                        except Exception as e:
+                            logger.warning(f"Failed to fetch enhanced run {root_run.id}: {e}")
+                            # Fallback: add without feedback
+                            all_enhanced_runs.append(root_run.dict())
 
-            # Store all runs in database
-            logger.info(f"Storing {len(all_runs)} runs in database...")
-            storage_result = await self.storage.store_runs_batch(all_runs, project_name)
+                # Store enhanced runs using enhanced storage method
+                logger.info(f"Storing {len(all_enhanced_runs)} enhanced runs in database...")
+                storage_result = await self.storage.store_enhanced_runs_batch(
+                    all_enhanced_runs, project_name
+                )
+
+            else:
+                # Use legacy method without feedback enhancement
+                all_runs = list(root_runs)
+
+                # Optionally fetch child runs for each trace
+                if include_children:
+                    logger.info("Fetching child runs for traces...")
+                    for root_run in root_runs:
+                        if root_run.trace_id:
+                            try:
+                                # Fetch complete trace hierarchy
+                                trace_runs = self.client.fetch_trace_hierarchy(
+                                    str(root_run.trace_id)
+                                )
+                                # Add only the child runs (exclude root run we already have)
+                                child_runs = [run for run in trace_runs if run.id != root_run.id]
+                                all_runs.extend(child_runs)
+                                logger.debug(
+                                    f"Added {len(child_runs)} child runs for trace {root_run.trace_id}"
+                                )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to fetch children for trace {root_run.trace_id}: {e}"
+                                )
+
+                # Store all runs in database using legacy method
+                logger.info(f"Storing {len(all_runs)} runs in database...")
+                storage_result = await self.storage.store_runs_batch(all_runs, project_name)
+
+            # Calculate total runs based on which method was used
+            if include_feedback:
+                total_runs = len(all_enhanced_runs) if "all_enhanced_runs" in locals() else 0
+            else:
+                total_runs = len(all_runs) if "all_runs" in locals() else 0
 
             result = {
                 "root_runs_fetched": root_count,
-                "total_runs_fetched": len(all_runs),
+                "total_runs_fetched": total_runs,
                 "runs_stored": storage_result["stored"],
                 "errors": storage_result["errors"],
+                "feedback_enhanced": include_feedback,
             }
 
             logger.info(f"Fetch complete: {result}")
@@ -115,11 +168,14 @@ class LangSmithDataFetcher:
         except Exception as e:
             raise DataFetchError(f"Failed to fetch and store runs: {e}") from e
 
-    async def fetch_and_store_trace(self, trace_id: str) -> Dict[str, Any]:
+    async def fetch_and_store_trace(
+        self, trace_id: str, include_feedback: bool = True
+    ) -> Dict[str, Any]:
         """Fetch a complete trace and store it in the database.
 
         Args:
             trace_id: Trace ID to fetch
+            include_feedback: Whether to include feedback records (Phase 12 enhancement)
 
         Returns:
             Dictionary with fetch and storage results
@@ -134,27 +190,76 @@ class LangSmithDataFetcher:
 
             logger.info(f"Fetching complete trace: {trace_id}")
 
-            # Fetch all runs in the trace
-            trace_runs = self.client.fetch_trace_hierarchy(trace_id)
-            logger.info(f"Found {len(trace_runs)} runs in trace")
+            # Choose extraction method based on feedback inclusion (Phase 12)
+            if include_feedback:
+                logger.info("Using enhanced trace extraction with feedback records...")
 
-            if not trace_runs:
-                return {
-                    "runs_fetched": 0,
-                    "runs_stored": 0,
-                    "errors": 0,
-                }
+                # Fetch all runs in the trace with feedback
+                enhanced_trace_runs = self.client.fetch_trace_hierarchy_with_feedback(trace_id)
+                logger.info(f"Found {len(enhanced_trace_runs)} enhanced runs in trace")
 
-            # Determine project name from the first run
-            project_name = getattr(trace_runs[0], "project", "unknown")
+                if not enhanced_trace_runs:
+                    return {
+                        "runs_fetched": 0,
+                        "runs_stored": 0,
+                        "errors": 0,
+                        "feedback_enhanced": True,
+                    }
 
-            # Store all runs in database
-            storage_result = await self.storage.store_runs_batch(trace_runs, project_name)
+                # Determine project name from the first run (it's a dict now)
+                project_name = enhanced_trace_runs[0].get("session_id", "unknown")
+
+                # Try to get a better project name from run metadata
+                for run_dict in enhanced_trace_runs:
+                    extra = run_dict.get("extra", {})
+                    metadata = extra.get("metadata", {})
+                    if "LANGSMITH_PROJECT" in metadata:
+                        project_name = metadata["LANGSMITH_PROJECT"]
+                        break
+
+                # Store enhanced runs in database
+                storage_result = await self.storage.store_enhanced_runs_batch(
+                    enhanced_trace_runs, project_name
+                )
+
+            else:
+                # Use legacy method without feedback enhancement
+                trace_runs = self.client.fetch_trace_hierarchy(trace_id)
+                logger.info(f"Found {len(trace_runs)} runs in trace")
+
+                if not trace_runs:
+                    return {
+                        "runs_fetched": 0,
+                        "runs_stored": 0,
+                        "errors": 0,
+                        "feedback_enhanced": False,
+                    }
+
+                # Determine project name from the first run
+                project_name = getattr(trace_runs[0], "session_id", "unknown")
+
+                # Try to get a better project name from run metadata
+                for run in trace_runs:
+                    if hasattr(run, "extra") and run.extra:
+                        metadata = run.extra.get("metadata", {})
+                        if "LANGSMITH_PROJECT" in metadata:
+                            project_name = metadata["LANGSMITH_PROJECT"]
+                            break
+
+                # Store all runs in database
+                storage_result = await self.storage.store_runs_batch(trace_runs, project_name)
+
+            # Calculate runs based on which method was used
+            if include_feedback:
+                runs_count = len(enhanced_trace_runs) if "enhanced_trace_runs" in locals() else 0
+            else:
+                runs_count = len(trace_runs) if "trace_runs" in locals() else 0
 
             result = {
-                "runs_fetched": len(trace_runs),
+                "runs_fetched": runs_count,
                 "runs_stored": storage_result["stored"],
                 "errors": storage_result["errors"],
+                "feedback_enhanced": include_feedback,
             }
 
             logger.info(f"Trace fetch complete: {result}")

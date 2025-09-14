@@ -86,11 +86,83 @@ class RunDataTransformer:
             "parent_run_ids": [str(pid) for pid in getattr(run, "parent_run_ids", None) or []],
             "prompt_cost_details": getattr(run, "prompt_cost_details", None),
             "prompt_token_details": getattr(run, "prompt_token_details", None),
+            # Enhanced feedback data (Phase 12 implementation)
+            "feedback_records": getattr(run, "feedback_records", None),
         }
 
         return {
             "run_id": str(run.id),
             "trace_id": str(run.trace_id) if run.trace_id else str(run.id),
+            "project": project_name,
+            "run_date": run_date,
+            "data": json.dumps(run_data, cls=DecimalJSONEncoder),
+        }
+
+    @staticmethod
+    def enhanced_run_dict_to_database_record(
+        run_dict: Dict[str, Any], project_name: str
+    ) -> Dict[str, Any]:
+        """Transform an enhanced run dictionary to database record format.
+
+        This method handles run dictionaries that already include feedback_records.
+        Used by Phase 12 enhanced extraction logic.
+
+        Args:
+            run_dict: Enhanced run dictionary with feedback_records
+            project_name: Project name for the run
+
+        Returns:
+            Dictionary with database record fields
+        """
+        # Extract run date from start_time or use current date
+        run_date = date.today()
+        if run_dict.get("start_time"):
+            try:
+                # Handle both datetime objects and ISO strings
+                from datetime import datetime
+
+                start_time_val = run_dict["start_time"]
+                if isinstance(start_time_val, datetime):
+                    run_date = start_time_val.date()
+                elif isinstance(start_time_val, str):
+                    start_time = datetime.fromisoformat(start_time_val.replace("Z", "+00:00"))
+                    run_date = start_time.date()
+            except (ValueError, AttributeError, TypeError):
+                pass  # Use default date
+
+        # The run_dict already contains all the data we need, including feedback_records
+        # Just ensure it's properly formatted for JSON storage
+        run_data = dict(run_dict)  # Make a copy
+
+        # Ensure required fields have proper types and handle datetime serialization
+        run_data["id"] = str(run_data.get("id", ""))
+        if run_data.get("trace_id"):
+            run_data["trace_id"] = str(run_data["trace_id"])
+        if run_data.get("parent_run_id"):
+            run_data["parent_run_id"] = str(run_data["parent_run_id"])
+
+        # Convert datetime and UUID objects for JSON serialization (recursive)
+        def serialize_for_json(obj):
+            """Recursively serialize datetime/UUID objects for JSON."""
+            from datetime import datetime
+            from uuid import UUID
+
+            if isinstance(obj, datetime):
+                return obj.isoformat()
+            elif isinstance(obj, UUID):
+                return str(obj)
+            elif isinstance(obj, dict):
+                return {k: serialize_for_json(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [serialize_for_json(item) for item in obj]
+            else:
+                return obj
+
+        run_data = serialize_for_json(run_data)
+
+        return {
+            "run_id": str(run_dict.get("id", "")),
+            "trace_id": str(run_dict.get("trace_id", run_dict.get("id", ""))),
             "project": project_name,
             "run_date": run_date,
             "data": json.dumps(run_data, cls=DecimalJSONEncoder),
@@ -206,6 +278,77 @@ class DatabaseRunStorage:
 
         except Exception as e:
             raise DataStorageError(f"Failed to store batch of {len(runs)} runs: {e}") from e
+
+    async def store_enhanced_runs_batch(
+        self, enhanced_runs: List[Dict[str, Any]], project_name: str
+    ) -> Dict[str, Any]:
+        """Store multiple enhanced run dictionaries in a batch operation.
+
+        This method handles run dictionaries that include feedback_records.
+        Used by Phase 12 enhanced extraction logic.
+
+        Args:
+            enhanced_runs: List of enhanced run dictionaries with feedback_records
+            project_name: Project name for the runs
+
+        Returns:
+            Dictionary with storage results
+
+        Raises:
+            DataStorageError: If batch storage fails
+        """
+        if not enhanced_runs:
+            return {"stored": 0, "skipped": 0, "errors": 0}
+
+        stored_count = 0
+        error_count = 0
+
+        try:
+            # Transform all enhanced run dicts to database records
+            records = []
+            for run_dict in enhanced_runs:
+                try:
+                    record = self.transformer.enhanced_run_dict_to_database_record(
+                        run_dict, project_name
+                    )
+                    records.append(record)
+                except Exception as e:
+                    run_id = run_dict.get("id", "unknown")
+                    logger.warning(f"Failed to transform enhanced run {run_id}: {e}")
+                    error_count += 1
+
+            if not records:
+                return {"stored": 0, "skipped": 0, "errors": error_count}
+
+            # Batch insert with conflict resolution (same as existing method)
+            async with self.db_manager.get_session() as session:
+                await session.execute(
+                    text("""
+                        INSERT INTO runs (run_id, trace_id, project, run_date, data)
+                        VALUES (:run_id, :trace_id, :project, :run_date, :data)
+                        ON CONFLICT (run_id) DO UPDATE SET
+                            trace_id = EXCLUDED.trace_id,
+                            project = EXCLUDED.project,
+                            run_date = EXCLUDED.run_date,
+                            data = EXCLUDED.data
+                    """),
+                    records,
+                )
+
+                stored_count = len(records)
+
+            logger.info(f"Batch stored {stored_count} enhanced runs for project {project_name}")
+
+            return {
+                "stored": stored_count,
+                "skipped": 0,
+                "errors": error_count,
+            }
+
+        except Exception as e:
+            raise DataStorageError(
+                f"Failed to store batch of {len(enhanced_runs)} enhanced runs: {e}"
+            ) from e
 
     async def get_run(self, run_id: Union[str, UUID]) -> Optional[Dict[str, Any]]:
         """Retrieve a single run from the database.

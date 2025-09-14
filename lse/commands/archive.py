@@ -129,8 +129,8 @@ def archive_fetch(
                     description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
                 )
 
-                # Fetch complete hierarchy for this trace
-                trace_runs = client.fetch_trace_hierarchy(root_run.id)
+                # Fetch complete hierarchy for this trace with enhanced feedback (Phase 12)
+                trace_runs = client.fetch_trace_hierarchy_with_feedback(root_run.id)
                 all_runs.extend(trace_runs)
 
                 # Add 1000ms delay to avoid rate limits
@@ -141,10 +141,10 @@ def archive_fetch(
             f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
         )
 
-        # Save all runs with progress
-        console.print(f"[blue]Saving {len(all_runs)} runs to local storage...[/blue]")
-        with ProgressContext("Saving runs"):
-            saved_paths = storage.save_traces(
+        # Save all runs with progress (using enhanced storage for Phase 12)
+        console.print(f"[blue]Saving {len(all_runs)} enhanced runs to local storage...[/blue]")
+        with ProgressContext("Saving enhanced runs"):
+            saved_paths = storage.save_enhanced_traces(
                 all_runs,
                 project_name=project,
                 timestamp=None,  # Use current timestamp for filename uniqueness
@@ -716,8 +716,9 @@ def archive_to_db(
             db_manager = await create_database_manager(settings)
             fetcher = LangSmithDataFetcher(settings, db_manager)
 
-            # Load runs from JSON files
+            # Load runs from JSON files (Phase 12: detect enhanced vs legacy files)
             runs_data = []
+            enhanced_runs_data = []
             console.print("[blue]Reading run files...[/blue]")
 
             with Progress() as progress:
@@ -732,6 +733,16 @@ def archive_to_db(
                             if "trace" in file_data:
                                 # New format with metadata wrapper
                                 run_data = file_data["trace"]
+
+                                # Check if this is an enhanced file (Phase 12)
+                                metadata = file_data.get("metadata", {})
+                                is_enhanced = metadata.get("enhanced_feedback", False)
+
+                                if is_enhanced:
+                                    enhanced_runs_data.append(run_data)
+                                else:
+                                    runs_data.append(run_data)
+
                             elif "metadata" in file_data and "id" not in file_data:
                                 # Skip if it's just metadata without trace data
                                 console.print(
@@ -740,87 +751,131 @@ def archive_to_db(
                                 progress.update(task, advance=1)
                                 continue
                             else:
-                                # Assume it's direct run data
+                                # Assume it's direct run data (legacy format)
                                 run_data = file_data
-
-                            runs_data.append(run_data)
+                                runs_data.append(run_data)
                         progress.update(task, advance=1)
                     except Exception as e:
                         console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
                         progress.update(task, advance=1)
 
-            if not runs_data:
+            total_runs = len(runs_data) + len(enhanced_runs_data)
+            if total_runs == 0:
                 console.print("[red]❌ No valid trace data found in files[/red]")
                 raise typer.Exit(1)
 
-            console.print(f"[green]Loaded {len(runs_data)} runs from files[/green]")
-
-            # Convert JSON data to Run objects and store in database
-            from langsmith.schemas import Run
-            from uuid import UUID
-            from datetime import datetime as dt
-
-            runs = []
-            console.print("[blue]Converting to Run objects...[/blue]")
-
-            for run_data in runs_data:
-                try:
-                    # Convert string IDs to UUIDs and datetime strings to datetime objects
-                    run_dict = run_data.copy()
-
-                    # Convert ID fields to UUIDs
-                    if "id" in run_dict and isinstance(run_dict["id"], str):
-                        run_dict["id"] = UUID(run_dict["id"])
-                    if "trace_id" in run_dict and isinstance(run_dict["trace_id"], str):
-                        run_dict["trace_id"] = UUID(run_dict["trace_id"])
-                    if "parent_run_id" in run_dict and isinstance(run_dict["parent_run_id"], str):
-                        run_dict["parent_run_id"] = UUID(run_dict["parent_run_id"])
-                    if "session_id" in run_dict and isinstance(run_dict["session_id"], str):
-                        run_dict["session_id"] = UUID(run_dict["session_id"])
-                    if "reference_example_id" in run_dict and isinstance(
-                        run_dict["reference_example_id"], str
-                    ):
-                        run_dict["reference_example_id"] = UUID(run_dict["reference_example_id"])
-                    if "manifest_id" in run_dict and isinstance(run_dict["manifest_id"], str):
-                        run_dict["manifest_id"] = UUID(run_dict["manifest_id"])
-
-                    # Convert datetime strings to datetime objects
-                    for field in ["start_time", "end_time", "first_token_time"]:
-                        if field in run_dict and isinstance(run_dict[field], str):
-                            run_dict[field] = dt.fromisoformat(
-                                run_dict[field].replace("Z", "+00:00")
-                            )
-
-                    # Create Run object
-                    run = Run(**run_dict)
-                    runs.append(run)
-
-                except Exception as e:
-                    console.print(f"[yellow]⚠️  Skipping invalid run data: {e}[/yellow]")
-
-            if not runs:
-                console.print("[red]❌ No valid runs could be created from trace data[/red]")
-                raise typer.Exit(1)
-
-            console.print(f"[green]Created {len(runs)} Run objects[/green]")
-
-            # Store runs in database
-            console.print("[blue]Storing runs in database...[/blue]")
-
-            with Progress() as progress:
-                task = progress.add_task("Storing in database", total=1)
-
-                result = await fetcher.storage.store_runs_batch(runs, project)
-
-                progress.update(task, completed=1)
-
             console.print(
-                f"[green]✅ Successfully stored {result['stored']} runs in database[/green]"
+                f"[green]Loaded {total_runs} runs: {len(runs_data)} legacy, {len(enhanced_runs_data)} enhanced[/green]"
             )
-            if result["errors"] > 0:
+
+            # Storage results tracking
+            total_stored = 0
+            total_errors = 0
+
+            # Process enhanced runs first (Phase 12)
+            if enhanced_runs_data:
                 console.print(
-                    f"[yellow]⚠️  {result['errors']} runs had errors during storage[/yellow]"
+                    f"[blue]Storing {len(enhanced_runs_data)} enhanced runs in database...[/blue]"
                 )
+
+                with Progress() as progress:
+                    task = progress.add_task("Storing enhanced runs", total=1)
+
+                    enhanced_result = await fetcher.storage.store_enhanced_runs_batch(
+                        enhanced_runs_data, project
+                    )
+                    total_stored += enhanced_result["stored"]
+                    total_errors += enhanced_result["errors"]
+
+                    progress.update(task, completed=1)
+
+                console.print(
+                    f"[green]✅ Enhanced runs stored: {enhanced_result['stored']}[/green]"
+                )
+                if enhanced_result["errors"] > 0:
+                    console.print(
+                        f"[yellow]⚠️  Enhanced runs errors: {enhanced_result['errors']}[/yellow]"
+                    )
+
+            # Process legacy runs if any exist
+            if runs_data:
+                console.print(f"[blue]Processing {len(runs_data)} legacy runs...[/blue]")
+
+                # Convert JSON data to Run objects for legacy storage
+                from langsmith.schemas import Run
+                from uuid import UUID
+                from datetime import datetime as dt
+
+                runs = []
+                console.print("[blue]Converting legacy runs to Run objects...[/blue]")
+
+                for run_data in runs_data:
+                    try:
+                        # Convert string IDs to UUIDs and datetime strings to datetime objects
+                        run_dict = run_data.copy()
+
+                        # Convert ID fields to UUIDs
+                        if "id" in run_dict and isinstance(run_dict["id"], str):
+                            run_dict["id"] = UUID(run_dict["id"])
+                        if "trace_id" in run_dict and isinstance(run_dict["trace_id"], str):
+                            run_dict["trace_id"] = UUID(run_dict["trace_id"])
+                        if "parent_run_id" in run_dict and isinstance(
+                            run_dict["parent_run_id"], str
+                        ):
+                            run_dict["parent_run_id"] = UUID(run_dict["parent_run_id"])
+                        if "session_id" in run_dict and isinstance(run_dict["session_id"], str):
+                            run_dict["session_id"] = UUID(run_dict["session_id"])
+                        if "reference_example_id" in run_dict and isinstance(
+                            run_dict["reference_example_id"], str
+                        ):
+                            run_dict["reference_example_id"] = UUID(
+                                run_dict["reference_example_id"]
+                            )
+                        if "manifest_id" in run_dict and isinstance(run_dict["manifest_id"], str):
+                            run_dict["manifest_id"] = UUID(run_dict["manifest_id"])
+
+                        # Convert datetime strings to datetime objects
+                        for field in ["start_time", "end_time", "first_token_time"]:
+                            if field in run_dict and isinstance(run_dict[field], str):
+                                run_dict[field] = dt.fromisoformat(
+                                    run_dict[field].replace("Z", "+00:00")
+                                )
+
+                        # Create Run object
+                        run = Run(**run_dict)
+                        runs.append(run)
+
+                    except Exception as e:
+                        console.print(f"[yellow]⚠️  Skipping invalid legacy run data: {e}[/yellow]")
+
+                if runs:
+                    console.print(f"[green]Created {len(runs)} legacy Run objects[/green]")
+
+                    # Store legacy runs in database
+                    console.print("[blue]Storing legacy runs in database...[/blue]")
+
+                    with Progress() as progress:
+                        task = progress.add_task("Storing legacy runs", total=1)
+
+                        legacy_result = await fetcher.storage.store_runs_batch(runs, project)
+                        total_stored += legacy_result["stored"]
+                        total_errors += legacy_result["errors"]
+
+                        progress.update(task, completed=1)
+
+                    console.print(
+                        f"[green]✅ Legacy runs stored: {legacy_result['stored']}[/green]"
+                    )
+                    if legacy_result["errors"] > 0:
+                        console.print(
+                            f"[yellow]⚠️  Legacy runs errors: {legacy_result['errors']}[/yellow]"
+                        )
+                else:
+                    console.print("[yellow]⚠️  No valid legacy runs could be created[/yellow]")
+
+            if total_stored == 0:
+                console.print("[red]❌ No runs were successfully stored in database[/red]")
+                raise typer.Exit(1)
 
             # Close database connection
             await db_manager.close()
