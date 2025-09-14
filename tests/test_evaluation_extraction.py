@@ -287,6 +287,46 @@ class TestOutputExtraction:
         assert outputs["is_explicit"] is True
         assert outputs["has_conflict"] is False
 
+    def test_extract_outputs_none_outputs(self):
+        """Test output extraction handles None outputs from error traces."""
+        builder = DatasetBuilder()
+
+        trace_data = {
+            "trace": {
+                "outputs": None  # This can happen with error traces
+            }
+        }
+
+        outputs = builder._extract_outputs(trace_data)
+
+        # Should return default values without throwing errors
+        assert outputs["is_meme"] is False
+        assert outputs["is_explicit"] is False
+        assert outputs["has_conflict"] is False
+        assert outputs["has_trademark_conflict"] is False
+
+    def test_extract_outputs_none_analysis(self):
+        """Test output extraction handles None analysis structures."""
+        builder = DatasetBuilder()
+
+        trace_data = {
+            "trace": {
+                "outputs": {
+                    "name_analysis": None,  # This can happen
+                    "website_analysis": None,  # This can happen
+                    "some_other_field": "should be ignored",
+                }
+            }
+        }
+
+        outputs = builder._extract_outputs(trace_data)
+
+        # Should return default values without throwing errors
+        assert outputs["is_meme"] is False
+        assert outputs["is_explicit"] is False
+        assert outputs["has_conflict"] is False
+        assert outputs["has_trademark_conflict"] is False
+
     def test_extract_boolean_results_method(self):
         """Test the _extract_boolean_results helper method."""
         builder = DatasetBuilder()

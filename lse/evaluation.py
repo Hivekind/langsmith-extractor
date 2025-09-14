@@ -872,9 +872,13 @@ class DatasetBuilder:
             # Fallback to top-level outputs
             trace_outputs = trace_data.get("outputs", {})
 
+        # Handle None outputs (e.g., from error traces)
+        if trace_outputs is None:
+            trace_outputs = {}
+
         # Navigate through nested analysis structures
-        name_analysis = trace_outputs.get("name_analysis", {})
-        website_analysis = trace_outputs.get("website_analysis", {})
+        name_analysis = trace_outputs.get("name_analysis", {}) or {}
+        website_analysis = trace_outputs.get("website_analysis", {}) or {}
 
         # Extract boolean evaluation results
         self._extract_boolean_results(outputs, name_analysis, website_analysis, trace_outputs)
