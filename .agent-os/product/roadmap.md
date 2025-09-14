@@ -16,6 +16,7 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [Phase 10: Evaluation Dataset Database Migration](#phase-10-evaluation-dataset-database-migration-) ✅ **COMPLETED**
 - [Phase 11: Reporting Database Migration](#phase-11-reporting-database-migration-) ✅ **COMPLETED**
 - [**Phase 12: Critical Feedback Data Loss Fix**](#phase-12-critical-feedback-data-loss-fix--urgent) 🚨 **URGENT**
+- [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
 
 ---
 
@@ -33,6 +34,7 @@ LangSmith Extractor enables teams to extract, analyze, and archive LangSmith tra
 
 ### 🚨 Critical Issues
 - **Phase 12**: **Critical feedback data loss** - detailed feedback rationale missing from extraction
+- **Phase 13**: **Dataset format generation** - eval create-dataset producing wrong output format
 
 ---
 
@@ -918,6 +920,202 @@ lse archive full-sweep --project my-project --date 2025-09-06
 - **Performance Impact**: Enhanced extraction completes within 2x of current timing
 - **Evaluation Accuracy**: Dataset creation can access detailed feedback rationale
 - **System Reliability**: Enhanced extraction maintains current error rates and reliability
+
+## Phase 13: Dataset Format Fix 🚨 **URGENT**
+
+**Goal:** Fix evaluation dataset generation to produce correct format matching expected structure  
+**Success Criteria:** `eval create-dataset` outputs clean, properly formatted JSONL matching expected format with comprehensive test coverage
+
+### 🚨 Critical Problem Statement
+**Format Mismatch Identified**: The current evaluation dataset generation produces incorrect output format:
+
+1. **Wrong Input Structure**: Currently outputs complex LangChain message objects instead of clean input fields
+2. **Wrong Output Structure**: Currently outputs raw LangChain generation data instead of clean boolean results
+3. **Business Impact**: Generated datasets cannot be used for evaluation workflows as they don't match expected format
+4. **Test Coverage Gap**: No tests validating output format compliance
+
+### Current vs Expected Format Analysis
+
+#### Current (Incorrect) Format
+```json
+{
+  "inputs": {
+    "messages": [
+      {
+        "id": ["langchain", "schema", "messages", "SystemMessage"],
+        "type": "constructor", 
+        "kwargs": {"content": "system prompt..."}
+      }
+    ]
+  },
+  "outputs": {
+    "run": {...},
+    "type": "LLMResult",
+    "llm_output": {...},
+    "generations": [...],
+    "final_decision": "PASS"
+  }
+}
+```
+
+#### Expected (Correct) Format  
+```json
+{
+  "inputs": {
+    "name": "Goku Super Saiyan",
+    "symbol": "Goku", 
+    "description": "A meme token inspired by..."
+  },
+  "outputs": {
+    "is_meme": true,
+    "is_explicit": false,
+    "has_conflict": true
+  }
+}
+```
+
+### Technical Root Cause Analysis
+
+1. **Data extraction methods** in `/lse/evaluation.py` lines 806-869 are extracting raw trace data instead of processed inputs/outputs
+2. **Format transformation methods** `_format_token_name()` and `_format_website()` need to extract from the actual nested structure correctly
+3. **Test coverage gap** - no tests validating final JSONL output format compliance
+
+### Implementation Plan
+
+#### Phase 13.1: Fix Input Data Extraction `M`
+- [ ] **Update `_extract_inputs()` method** - Extract clean fields from `input_data` nested structure
+- [ ] **Token name inputs** - Return only name, symbol, description for token_name eval type
+- [ ] **Website inputs** - Return name, symbol, network, description, website_url, social_profiles, contract_address for website eval type
+- [ ] **Remove LangChain artifacts** - Eliminate messages, kwargs, and other framework-specific data
+
+#### Phase 13.2: Fix Output Data Extraction `M`
+- [ ] **Update `_extract_outputs()` method** - Extract actual evaluation results from nested output structure  
+- [ ] **Boolean field extraction** - Extract is_meme, is_explicit, has_conflict/has_trademark_conflict as clean booleans
+- [ ] **Nested result handling** - Navigate through name_analysis, website_analysis structures correctly
+- [ ] **Remove LangChain artifacts** - Eliminate run, llm_output, generations, and other framework data
+
+#### Phase 13.3: Update Format Methods `M`
+- [ ] **Update `_format_token_name()` method** - Work with clean extracted data
+- [ ] **Update `_format_website()` method** - Work with clean extracted data  
+- [ ] **Remove redundant processing** - Since extraction is now clean
+
+#### Phase 13.4: Comprehensive Test Coverage `M`
+- [ ] **Format validation tests** - Tests that validate exact output format compliance
+- [ ] **Field presence tests** - Verify all expected fields are present and correctly typed
+- [ ] **Boolean conversion tests** - Ensure proper boolean extraction from nested structures
+- [ ] **Integration tests** - End-to-end tests of create-dataset command output format
+
+### Technical Specifications
+
+#### Command Interface (Unchanged)
+```bash
+# Standard dataset creation commands (enhanced output format)
+lse eval create-dataset --project my-project --date 2025-01-15 --eval-type token_name
+lse eval create-dataset --project my-project --date 2025-01-15 --eval-type website  
+```
+
+#### Expected Output Format Compliance
+
+**Token Name Evaluation**:
+```json
+{
+  "inputs": {
+    "name": "Token Name",
+    "symbol": "TOKEN", 
+    "description": "Token description text"
+  },
+  "outputs": {
+    "is_meme": false,
+    "is_explicit": false,
+    "has_conflict": true
+  }
+}
+```
+
+**Website Evaluation**:
+```json
+{
+  "inputs": {
+    "name": "Token Name",
+    "symbol": "TOKEN",
+    "network": "ethereum", 
+    "description": "Token description",
+    "website_url": "https://example.com",
+    "social_profiles": [],
+    "contract_address": "0x123..."
+  },
+  "outputs": {
+    "is_meme": false,
+    "is_explicit": false, 
+    "is_available": true,
+    "is_malicious": false,
+    "has_trademark_conflict": false
+  }
+}
+```
+
+### Quality Gates
+
+#### Phase 13.1 Completion Criteria
+- [ ] Input extraction produces clean dictionaries with only expected fields
+- [ ] No LangChain message objects or framework artifacts in inputs
+- [ ] Token name and website eval types produce correct input field sets
+- [ ] Input extraction tests achieve 100% coverage
+
+#### Phase 13.2 Completion Criteria  
+- [ ] Output extraction produces clean boolean dictionaries matching expected format
+- [ ] No raw LangChain outputs or nested generation data in results
+- [ ] Boolean fields correctly extracted from nested analysis structures
+- [ ] Output extraction tests achieve 100% coverage
+
+#### Phase 13.3 Completion Criteria
+- [ ] Format methods work with clean extracted data
+- [ ] No redundant processing of already-clean data
+- [ ] Format method tests achieve 100% coverage
+
+#### Phase 13.4 Completion Criteria
+- [ ] End-to-end tests validate complete JSONL output format
+- [ ] Format compliance tests catch any deviation from expected structure  
+- [ ] Test coverage exceeds 95% for all dataset generation code paths
+- [ ] Generated datasets pass format validation against expected examples
+
+### File Modifications Required
+
+#### Core Implementation Files
+- `/lse/evaluation.py` lines 806-869: Fix `_extract_inputs()` and `_extract_outputs()` methods
+- `/lse/evaluation.py` lines 897-1071: Update `_format_token_name()` and `_format_website()` methods
+
+#### Test Files  
+- `/tests/test_eval_command.py`: Add comprehensive format validation tests
+- New file `/tests/test_dataset_format.py`: Dedicated format compliance test suite
+- `/tests/fixtures/`: Add expected format examples for test validation
+
+### Risk Assessment
+
+#### Critical Risks
+- **Breaking Changes**: Format changes might affect downstream evaluation workflows
+- **Data Structure Complexity**: Nested LangChain data extraction is complex and error-prone  
+- **Test Coverage Gaps**: Insufficient testing could allow format regressions
+- **Backward Compatibility**: New format might not work with existing evaluation systems
+
+#### Mitigation Strategies
+- **Gradual Rollout**: Test format changes with small datasets first
+- **Format Validation**: Implement strict format validation before dataset output
+- **Comprehensive Testing**: Achieve >95% test coverage with format compliance tests
+- **Documentation**: Clear examples of expected vs current format for troubleshooting
+
+### Dependencies
+- Phase 10 (Evaluation Database Migration) completed ✅
+- Database populated with evaluation-ready trace data ✅  
+- Access to expected format examples for validation ✅
+- Test framework setup for format validation testing
+
+### Success Metrics
+- **Format Compliance**: 100% of generated datasets match expected JSONL format
+- **Field Accuracy**: All input/output fields correctly extracted and typed
+- **Test Coverage**: >95% coverage with dedicated format validation tests  
+- **Performance**: Dataset generation maintains current performance levels
+- **Compatibility**: Generated datasets work correctly with existing LangSmith upload workflow
 
 ---
 
