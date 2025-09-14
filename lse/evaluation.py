@@ -804,46 +804,151 @@ class DatasetBuilder:
             return None
 
     def _extract_inputs(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract inputs from trace data."""
+        """Extract clean input fields from trace data."""
         inputs = {}
 
-        # Check trace level inputs (primary location)
-        trace = trace_data.get("trace", {})
-        if "inputs" in trace:
-            inputs.update(trace["inputs"])
+        # Handle both database format (direct) and file format (wrapped)
+        if "trace" in trace_data:
+            trace = trace_data["trace"]
+        else:
+            trace = trace_data
 
-        # Check direct inputs field (backup)
-        if "inputs" in trace_data:
-            inputs.update(trace_data["inputs"])
+        # Extract from input_data (primary location)
+        trace_inputs = trace.get("inputs", {})
+        input_data = trace_inputs.get("input_data", {})
 
-        # Check run inputs (backup)
-        if "run" in trace_data and "inputs" in trace_data["run"]:
-            inputs.update(trace_data["run"]["inputs"])
+        if isinstance(input_data, dict):
+            # Extract standard fields that appear in both eval types
+            for field in ["name", "description"]:
+                if field in input_data:
+                    inputs[field] = input_data[field]
+
+            # Extract crypto_symbol as symbol
+            if "crypto_symbol" in input_data:
+                inputs["symbol"] = input_data["crypto_symbol"]
+            elif "symbol" in input_data:
+                inputs["symbol"] = input_data["symbol"]
+
+            # Extract website-specific fields
+            for field in ["website_url", "network", "contract_address", "social_profiles"]:
+                if field in input_data:
+                    inputs[field] = input_data[field]
+
+        # Fallback: try to extract from direct fields if input_data not available
+        if not inputs and trace_inputs:
+            # Try direct field extraction as backup
+            for field in [
+                "name",
+                "description",
+                "website_url",
+                "network",
+                "contract_address",
+                "social_profiles",
+            ]:
+                if field in trace_inputs:
+                    inputs[field] = trace_inputs[field]
+
+            # Handle symbol/crypto_symbol mapping
+            if "crypto_symbol" in trace_inputs:
+                inputs["symbol"] = trace_inputs["crypto_symbol"]
+            elif "symbol" in trace_inputs:
+                inputs["symbol"] = trace_inputs["symbol"]
 
         return inputs
 
     def _extract_outputs(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract AI outputs from trace data."""
+        """Extract clean evaluation outputs from trace data."""
         outputs = {}
 
-        # Check trace level outputs (primary location)
-        trace = trace_data.get("trace", {})
-        if "outputs" in trace and trace["outputs"] is not None:
-            outputs.update(trace["outputs"])
+        # Handle both database format (direct) and file format (wrapped)
+        if "trace" in trace_data:
+            trace = trace_data["trace"]
+        else:
+            trace = trace_data
 
-        # Check direct outputs field (backup)
-        if "outputs" in trace_data and trace_data["outputs"] is not None:
-            outputs.update(trace_data["outputs"])
+        # Get outputs from trace level
+        trace_outputs = trace.get("outputs", {})
+        if not trace_outputs:
+            # Fallback to top-level outputs
+            trace_outputs = trace_data.get("outputs", {})
 
-        # Check run outputs (backup)
-        if (
-            "run" in trace_data
-            and "outputs" in trace_data["run"]
-            and trace_data["run"]["outputs"] is not None
-        ):
-            outputs.update(trace_data["run"]["outputs"])
+        # Navigate through nested analysis structures
+        name_analysis = trace_outputs.get("name_analysis", {})
+        website_analysis = trace_outputs.get("website_analysis", {})
+
+        # Extract boolean evaluation results
+        self._extract_boolean_results(outputs, name_analysis, website_analysis, trace_outputs)
 
         return outputs
+
+    def _extract_boolean_results(
+        self, outputs: dict, name_analysis: dict, website_analysis: dict, trace_outputs: dict
+    ):
+        """Extract boolean evaluation results from nested structures."""
+
+        # Extract is_meme - use the first available value (don't rely on 'or' for False values)
+        meme_check = None
+        if "meme_check" in name_analysis:
+            meme_check = name_analysis["meme_check"]
+        elif "meme_check" in website_analysis:
+            meme_check = website_analysis["meme_check"]
+        elif "meme_check" in trace_outputs:
+            meme_check = trace_outputs["meme_check"]
+
+        if isinstance(meme_check, dict):
+            outputs["is_meme"] = bool(meme_check.get("is_meme", False))
+        elif meme_check is not None:
+            outputs["is_meme"] = bool(meme_check)
+        else:
+            outputs["is_meme"] = bool(trace_outputs.get("is_meme", False))
+
+        # Extract is_explicit - use the first available value
+        explicit_check = None
+        if "explicit_check" in name_analysis:
+            explicit_check = name_analysis["explicit_check"]
+        elif "explicit_check" in website_analysis:
+            explicit_check = website_analysis["explicit_check"]
+        elif "explicit_check" in trace_outputs:
+            explicit_check = trace_outputs["explicit_check"]
+
+        if isinstance(explicit_check, dict):
+            outputs["is_explicit"] = bool(explicit_check.get("is_explicit", False))
+        elif explicit_check is not None:
+            outputs["is_explicit"] = bool(explicit_check)
+        else:
+            outputs["is_explicit"] = bool(trace_outputs.get("is_explicit", False))
+
+        # Extract trademark/conflict info - use the first available value
+        trademark_check = None
+        if "trademark_check" in name_analysis:
+            trademark_check = name_analysis["trademark_check"]
+        elif "trademark_check" in website_analysis:
+            trademark_check = website_analysis["trademark_check"]
+        elif "trademark_check" in trace_outputs:
+            trademark_check = trace_outputs["trademark_check"]
+
+        if isinstance(trademark_check, dict):
+            outputs["has_conflict"] = bool(trademark_check.get("has_conflict", False))
+            outputs["has_trademark_conflict"] = bool(trademark_check.get("has_conflict", False))
+        else:
+            outputs["has_conflict"] = bool(trace_outputs.get("has_conflict", False))
+            outputs["has_trademark_conflict"] = bool(
+                trace_outputs.get(
+                    "has_trademark_conflict", trace_outputs.get("has_conflict", False)
+                )
+            )
+
+        # Website-specific fields - check both analysis and direct fields
+        if website_analysis or trace_outputs.get("is_available") is not None:
+            outputs["is_available"] = bool(
+                website_analysis.get("is_available", trace_outputs.get("is_available", True))
+            )
+
+            malicious_check = website_analysis.get("malicious_check")
+            if isinstance(malicious_check, dict):
+                outputs["is_malicious"] = bool(malicious_check.get("is_dangerous", False))
+            else:
+                outputs["is_malicious"] = bool(trace_outputs.get("is_malicious", False))
 
     def _extract_reference(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract human feedback/reference from trace data."""
@@ -900,76 +1005,30 @@ class DatasetBuilder:
         outputs: Dict[str, Any],
         reference: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        """Format data for token_name evaluation type.
+        """Format data for token_name evaluation type with clean extracted data.
 
         Args:
-          inputs: Input data
-          outputs: Output data
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
           reference: Reference data
 
         Returns:
           Formatted inputs, outputs, and reference for token_name evaluation
         """
-        # Extract data from input_data if available (primary location)
-        input_data = inputs.get("input_data", {})
-        if isinstance(input_data, dict):
-            name = input_data.get("name", "")
-            symbol = input_data.get("crypto_symbol", "")
-            description = input_data.get("description", "")
-        else:
-            # Fallback to direct fields if input_data not found
-            name = inputs.get("name", "")
-            symbol = inputs.get("crypto_symbol", inputs.get("symbol", ""))
-            description = inputs.get("description", "")
-
-        # Format inputs according to required structure
+        # Format inputs - data is already clean from _extract_inputs()
         formatted_inputs = {
-            "name": name,
-            "symbol": symbol,
-            "description": description,
+            "name": inputs.get("name", ""),
+            "symbol": inputs.get("symbol", ""),
+            "description": inputs.get("description", ""),
         }
 
-        # Format outputs according to required structure
-        formatted_outputs = {}
+        # Format outputs - data is already clean from _extract_outputs()
+        formatted_outputs = {
+            "is_meme": outputs.get("is_meme", False),
+            "is_explicit": outputs.get("is_explicit", False),
+            "has_conflict": outputs.get("has_conflict", False),
+        }
 
-        # Check if outputs are nested under name_analysis
-        analysis_data = outputs.get("name_analysis", outputs)
-
-        # Extract is_meme from meme_check
-        if "meme_check" in analysis_data:
-            meme_result = analysis_data["meme_check"]
-            if isinstance(meme_result, dict):
-                is_meme = meme_result.get("is_meme", False)
-                formatted_outputs["is_meme"] = bool(is_meme)
-            else:
-                formatted_outputs["is_meme"] = False
-        else:
-            formatted_outputs["is_meme"] = False
-
-        # Extract is_explicit from explicit_check
-        if "explicit_check" in analysis_data:
-            explicit_result = analysis_data["explicit_check"]
-            if isinstance(explicit_result, dict):
-                is_explicit = explicit_result.get("is_explicit", False)
-                formatted_outputs["is_explicit"] = bool(is_explicit)
-            else:
-                formatted_outputs["is_explicit"] = False
-        else:
-            formatted_outputs["is_explicit"] = False
-
-        # Extract has_conflict from trademark_check
-        if "trademark_check" in analysis_data:
-            trademark_result = analysis_data["trademark_check"]
-            if isinstance(trademark_result, dict):
-                has_conflict = trademark_result.get("has_conflict", False)
-                formatted_outputs["has_conflict"] = bool(has_conflict)
-            else:
-                formatted_outputs["has_conflict"] = False
-        else:
-            formatted_outputs["has_conflict"] = False
-
-        # For token_name evaluation, we don't use reference data in the specific format
-        # Return empty reference or keep original for metadata purposes
         formatted_reference = reference
 
         return formatted_inputs, formatted_outputs, formatted_reference
@@ -980,93 +1039,35 @@ class DatasetBuilder:
         outputs: Dict[str, Any],
         reference: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        """Format data for website evaluation type.
+        """Format data for website evaluation type with clean extracted data.
 
         Args:
-          inputs: Input data
-          outputs: Output data
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
           reference: Reference data
 
         Returns:
           Formatted inputs, outputs, and reference for website evaluation
         """
-        # Extract data from input_data if available (primary location)
-        input_data = inputs.get("input_data", {})
-        if isinstance(input_data, dict):
-            name = input_data.get("name", "")
-            symbol = input_data.get("crypto_symbol", "")
-            description = input_data.get("description", "")
-            website_url = input_data.get("website_url", "")
-            network = input_data.get("network", "")
-            contract_address = input_data.get("contract_address", "")
-            social_profiles = input_data.get("social_profiles", [])
-        else:
-            # Fallback to direct fields if input_data not found
-            name = inputs.get("name", "")
-            symbol = inputs.get("crypto_symbol", inputs.get("symbol", ""))
-            description = inputs.get("description", "")
-            website_url = inputs.get("website_url", "")
-            network = inputs.get("network", "")
-            contract_address = inputs.get("contract_address", "")
-            social_profiles = inputs.get("social_profiles", [])
-
-        # Format inputs according to required structure for website evaluation
+        # Format inputs - data is already clean from _extract_inputs()
         formatted_inputs = {
-            "name": name,
-            "symbol": symbol,
-            "network": network,
-            "description": description,
-            "website_url": website_url,
-            "social_profiles": social_profiles,
-            "contract_address": contract_address,
+            "name": inputs.get("name", ""),
+            "symbol": inputs.get("symbol", ""),
+            "network": inputs.get("network", ""),
+            "description": inputs.get("description", ""),
+            "website_url": inputs.get("website_url", ""),
+            "social_profiles": inputs.get("social_profiles", []),
+            "contract_address": inputs.get("contract_address", ""),
         }
 
-        # Format outputs according to required structure
-        formatted_outputs = {}
-
-        # Check if outputs are nested under analysis sections
-        name_analysis = outputs.get("name_analysis", {})
-        website_analysis = outputs.get("website_analysis", {})
-
-        # Extract meme classification
-        meme_check = name_analysis.get("meme_check") or website_analysis.get("meme_check")
-        if meme_check:
-            is_meme = meme_check.get("is_meme", False)
-        else:
-            is_meme = outputs.get("is_meme", False)
-        formatted_outputs["is_meme"] = bool(is_meme)
-
-        # Extract explicit content classification
-        explicit_check = name_analysis.get("explicit_check") or website_analysis.get(
-            "explicit_check"
-        )
-        if explicit_check:
-            is_explicit = explicit_check.get("is_explicit", False)
-        else:
-            is_explicit = outputs.get("is_explicit", False)
-        formatted_outputs["is_explicit"] = bool(is_explicit)
-
-        # Extract website availability
-        is_available = website_analysis.get("is_available", True)
-        formatted_outputs["is_available"] = bool(is_available)
-
-        # Extract malicious check
-        malicious_check = website_analysis.get("malicious_check", {})
-        if malicious_check:
-            is_malicious = malicious_check.get("is_dangerous", False)
-        else:
-            is_malicious = outputs.get("is_malicious", False)
-        formatted_outputs["is_malicious"] = bool(is_malicious)
-
-        # Extract trademark conflict
-        trademark_check = name_analysis.get("trademark_check") or website_analysis.get(
-            "trademark_check"
-        )
-        if trademark_check:
-            has_trademark_conflict = trademark_check.get("has_conflict", False)
-        else:
-            has_trademark_conflict = outputs.get("has_trademark_conflict", False)
-        formatted_outputs["has_trademark_conflict"] = bool(has_trademark_conflict)
+        # Format outputs - data is already clean from _extract_outputs()
+        formatted_outputs = {
+            "is_meme": outputs.get("is_meme", False),
+            "is_explicit": outputs.get("is_explicit", False),
+            "is_available": outputs.get("is_available", True),
+            "is_malicious": outputs.get("is_malicious", False),
+            "has_trademark_conflict": outputs.get("has_trademark_conflict", False),
+        }
 
         return formatted_inputs, formatted_outputs, reference
 
