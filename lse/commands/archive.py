@@ -1088,67 +1088,147 @@ def archive_full_sweep(
                 trace_folder = archive_manager.get_trace_folder(project, date)
                 json_files = [f for f in trace_folder.glob("*.json") if not f.name.startswith("_")]
 
-                # Load runs from JSON files
+                # Load runs from JSON files (Phase 12: detect enhanced vs legacy files)
                 runs_data = []
-                for json_file in json_files:
-                    try:
-                        with open(json_file, "r") as f:
-                            file_data = json.load(f)
+                enhanced_runs_data = []
 
-                            # Handle different JSON file formats
-                            if "trace" in file_data:
-                                # New format with metadata wrapper
-                                run_data = file_data["trace"]
-                            elif "metadata" in file_data and "id" not in file_data:
-                                # Skip if it's just metadata without trace data
-                                continue
-                            else:
-                                # Assume it's direct run data
-                                run_data = file_data
-
-                            runs_data.append(run_data)
-                    except Exception as e:
-                        console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
-
-                # Convert to Run objects
-                runs = []
-                for run_data in runs_data:
-                    try:
-                        run_dict = run_data.copy()
-
-                        # Convert ID fields to UUIDs
-                        for field in [
-                            "id",
-                            "trace_id",
-                            "parent_run_id",
-                            "session_id",
-                            "reference_example_id",
-                            "manifest_id",
-                        ]:
-                            if (
-                                field in run_dict
-                                and isinstance(run_dict[field], str)
-                                and run_dict[field]
-                            ):
-                                run_dict[field] = UUID(run_dict[field])
-
-                        # Convert datetime strings
-                        for field in ["start_time", "end_time", "first_token_time"]:
-                            if field in run_dict and isinstance(run_dict[field], str):
-                                run_dict[field] = dt.fromisoformat(
-                                    run_dict[field].replace("Z", "+00:00")
-                                )
-
-                        run = Run(**run_dict)
-                        runs.append(run)
-                    except Exception as e:
-                        console.print(f"[yellow]⚠️  Skipping invalid run: {e}[/yellow]")
-
-                # Store in database
                 with Progress() as progress:
-                    task = progress.add_task("Storing in database", total=1)
-                    result = await fetcher.storage.store_runs_batch(runs, project)
-                    progress.update(task, completed=1)
+                    task = progress.add_task("Loading files", total=len(json_files))
+
+                    for json_file in json_files:
+                        try:
+                            with open(json_file, "r") as f:
+                                file_data = json.load(f)
+
+                                # Handle different JSON file formats
+                                if "trace" in file_data:
+                                    # New format with metadata wrapper
+                                    run_data = file_data["trace"]
+
+                                    # Check if this is an enhanced file (Phase 12)
+                                    metadata = file_data.get("metadata", {})
+                                    is_enhanced = metadata.get("enhanced_feedback", False)
+
+                                    if is_enhanced:
+                                        enhanced_runs_data.append(run_data)
+                                    else:
+                                        runs_data.append(run_data)
+                                elif "metadata" in file_data and "id" not in file_data:
+                                    # Skip if it's just metadata without trace data
+                                    progress.update(task, advance=1)
+                                    continue
+                                else:
+                                    # Assume it's direct run data (legacy format)
+                                    run_data = file_data
+                                    runs_data.append(run_data)
+                            progress.update(task, advance=1)
+                        except Exception as e:
+                            console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
+                            progress.update(task, advance=1)
+
+                total_runs = len(runs_data) + len(enhanced_runs_data)
+                if total_runs == 0:
+                    console.print("[red]❌ No valid trace data found in files[/red]")
+                    return {"stored": 0, "errors": 0}
+
+                console.print(
+                    f"[green]Loaded {total_runs} runs: {len(runs_data)} legacy, {len(enhanced_runs_data)} enhanced[/green]"
+                )
+
+                # Storage results tracking
+                total_stored = 0
+                total_errors = 0
+
+                # Process enhanced runs first (Phase 12)
+                if enhanced_runs_data:
+                    console.print(
+                        f"[blue]Storing {len(enhanced_runs_data)} enhanced runs in database...[/blue]"
+                    )
+
+                    with Progress() as progress:
+                        task = progress.add_task("Storing enhanced runs", total=1)
+
+                        enhanced_result = await fetcher.storage.store_enhanced_runs_batch(
+                            enhanced_runs_data, project
+                        )
+                        total_stored += enhanced_result["stored"]
+                        total_errors += enhanced_result["errors"]
+
+                        progress.update(task, completed=1)
+
+                    console.print(
+                        f"[green]✅ Enhanced runs stored: {enhanced_result['stored']}[/green]"
+                    )
+                    if enhanced_result["errors"] > 0:
+                        console.print(
+                            f"[yellow]⚠️  Enhanced runs errors: {enhanced_result['errors']}[/yellow]"
+                        )
+
+                # Process legacy runs if any exist
+                if runs_data:
+                    console.print(
+                        f"[blue]Converting and storing {len(runs_data)} legacy runs...[/blue]"
+                    )
+
+                    # Convert to Run objects
+                    runs = []
+                    for run_data in runs_data:
+                        try:
+                            run_dict = run_data.copy()
+
+                            # Convert ID fields to UUIDs
+                            for field in [
+                                "id",
+                                "trace_id",
+                                "parent_run_id",
+                                "session_id",
+                                "reference_example_id",
+                                "manifest_id",
+                            ]:
+                                if (
+                                    field in run_dict
+                                    and isinstance(run_dict[field], str)
+                                    and run_dict[field]
+                                ):
+                                    run_dict[field] = UUID(run_dict[field])
+
+                            # Convert datetime strings
+                            for field in ["start_time", "end_time", "first_token_time"]:
+                                if field in run_dict and isinstance(run_dict[field], str):
+                                    run_dict[field] = dt.fromisoformat(
+                                        run_dict[field].replace("Z", "+00:00")
+                                    )
+
+                            run = Run(**run_dict)
+                            runs.append(run)
+                        except Exception as e:
+                            console.print(f"[yellow]⚠️  Skipping invalid run: {e}[/yellow]")
+
+                    if runs:
+                        console.print(f"[green]Created {len(runs)} legacy Run objects[/green]")
+
+                        # Store legacy runs in database
+                        console.print("[blue]Storing legacy runs in database...[/blue]")
+
+                        with Progress() as progress:
+                            task = progress.add_task("Storing legacy runs", total=1)
+
+                            legacy_result = await fetcher.storage.store_runs_batch(runs, project)
+                            total_stored += legacy_result["stored"]
+                            total_errors += legacy_result["errors"]
+
+                            progress.update(task, completed=1)
+
+                        console.print(
+                            f"[green]✅ Legacy runs stored: {legacy_result['stored']}[/green]"
+                        )
+                        if legacy_result["errors"] > 0:
+                            console.print(
+                                f"[yellow]⚠️  Legacy runs errors: {legacy_result['errors']}[/yellow]"
+                            )
+
+                # Compile results
+                result = {"stored": total_stored, "errors": total_errors}
 
                 console.print(
                     f"[green]✓ Step 4 complete: Stored {result['stored']} runs in database[/green]"
