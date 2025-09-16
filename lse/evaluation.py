@@ -1254,7 +1254,8 @@ class DatasetBuilder:
         child_runs = []
 
         for run_data in run_data_list:
-            if run_data.get("trace_id") == run_data.get("run_id"):
+            # Root run is identified when trace_id equals the run's id (not run_id)
+            if run_data.get("trace_id") == run_data.get("id"):
                 if root_run is not None:
                     console.print(
                         f"[yellow]Warning: Multiple root runs found in trace {run_data.get('trace_id')}[/yellow]"

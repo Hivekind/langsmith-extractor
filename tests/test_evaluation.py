@@ -470,17 +470,17 @@ class TestRootRunPriority:
         run_data_list = [
             {
                 "trace_id": "test-trace-123",
-                "run_id": "test-trace-123",  # Root run
+                "id": "test-trace-123",  # Root run (trace_id == id)
                 "outputs": {"website_analysis": {"is_available": True}},
             },
             {
                 "trace_id": "test-trace-123",
-                "run_id": "child-run-456",  # Child run
+                "id": "child-run-456",  # Child run
                 "outputs": {"website_analysis": {"is_available": False}},
             },
             {
                 "trace_id": "test-trace-123",
-                "run_id": "child-run-789",  # Child run
+                "id": "child-run-789",  # Child run
                 "outputs": {"website_analysis": {"is_available": None}},
             },
         ]
@@ -488,9 +488,9 @@ class TestRootRunPriority:
         root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
 
         assert root_run is not None
-        assert root_run["run_id"] == "test-trace-123"
+        assert root_run["id"] == "test-trace-123"
         assert len(child_runs) == 2
-        assert all(run["run_id"] != "test-trace-123" for run in child_runs)
+        assert all(run["id"] != "test-trace-123" for run in child_runs)
 
     def test_identify_trace_hierarchy_no_root_run(self):
         """Test edge case: no root run (all child runs)."""
@@ -499,12 +499,12 @@ class TestRootRunPriority:
         run_data_list = [
             {
                 "trace_id": "test-trace-123",
-                "run_id": "child-run-456",  # Child run
+                "id": "child-run-456",  # Child run
                 "outputs": {"website_analysis": {"is_available": False}},
             },
             {
                 "trace_id": "test-trace-123",
-                "run_id": "child-run-789",  # Child run
+                "id": "child-run-789",  # Child run
                 "outputs": {"website_analysis": {"is_available": None}},
             },
         ]
@@ -521,7 +521,7 @@ class TestRootRunPriority:
         run_data_list = [
             {
                 "trace_id": "test-trace-123",
-                "run_id": "test-trace-123",  # Root run
+                "id": "test-trace-123",  # Root run (trace_id == id)
                 "outputs": {"website_analysis": {"is_available": True}},
             }
         ]
@@ -529,7 +529,7 @@ class TestRootRunPriority:
         root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
 
         assert root_run is not None
-        assert root_run["run_id"] == "test-trace-123"
+        assert root_run["id"] == "test-trace-123"
         assert len(child_runs) == 0
 
     def test_get_critical_fields_availability(self):
