@@ -17,7 +17,8 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [Phase 11: Reporting Database Migration](#phase-11-reporting-database-migration-) ✅ **COMPLETED**
 - [**Phase 12: Critical Feedback Data Loss Fix**](#phase-12-critical-feedback-data-loss-fix--urgent) 🚨 **URGENT**
 - [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
-- [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) 🚨 **URGENT**
+- [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) ✅ **COMPLETED**
+- [**Phase 16: Availability Dataset Curation (Best 100)**](#phase-16-availability-dataset-curation-best-100-) 🎯 **NEXT**
 
 ---
 
@@ -36,7 +37,9 @@ LangSmith Extractor enables teams to extract, analyze, and archive LangSmith tra
 ### 🚨 Critical Issues
 - **Phase 12**: **Critical feedback data loss** - detailed feedback rationale missing from extraction
 - **Phase 13**: **Dataset format generation** - eval create-dataset producing wrong output format
-- **Phase 15**: **Availability dataset root run priority** - child runs overriding correct root run availability status
+
+### 🎯 Next Priority
+- **Phase 16**: **Availability dataset curation** - implement --best-100 feature for curated representative datasets
 
 ---
 
@@ -1422,6 +1425,213 @@ def test_foo_availability_fix():
 - Phase 14 (Availability Evaluation Type) completed ✅
 - Access to problematic trace examples for testing ✅
 - Database with trace hierarchy data available ✅
+
+## Phase 16: Availability Dataset Curation (Best 100) 🎯 **NEXT**
+
+**Goal:** Implement intelligent dataset curation for availability evaluation with --best-100 parameter  
+**Success Criteria:** Create optimally balanced 100-example availability datasets with comprehensive negative case coverage and representative positive examples
+
+### Feature Overview
+Add `--best-100` parameter to `lse eval create-dataset --eval-type availability` command to generate curated, high-quality datasets optimized for availability evaluation testing.
+
+**⚠️ Important Constraint**: The `--best-100` parameter is **ONLY supported for `--eval-type availability`**. It will not work with `token_name` or `website` eval types and will show an error if attempted.
+
+### Technical Requirements
+
+#### Phase 16.1: Dataset Curation Framework `M`
+**Objective**: Implement core dataset curation logic with configurable size limits
+
+**Key Features:**
+- Add `--best-100` CLI parameter to availability dataset creation
+- Implement intelligent example selection algorithm
+- Ensure comprehensive negative case coverage
+- Optimize positive case representation with domain diversity
+
+**Implementation Details:**
+```python
+def create_curated_dataset(self, traces: List[TraceMetadata], target_size: int = 100) -> EvaluationDataset:
+    """Create curated dataset with optimal example distribution."""
+    negative_examples = self._extract_negative_examples(traces)
+    positive_examples = self._select_representative_positive_examples(
+        traces, remaining_slots=target_size - len(negative_examples)
+    )
+    return self._build_curated_dataset(negative_examples + positive_examples)
+```
+
+#### Phase 16.2: Negative Case Prioritization `M`
+**Objective**: Ensure all false availability cases are captured with deduplication
+
+**Requirements:**
+- **Complete Coverage**: Include ALL traces with `is_available: false`
+- **URL Uniqueness**: Deduplicate by website_url for negative cases
+- **Priority Ordering**: Most recent examples preferred when deduplicating
+- **Validation**: Ensure no false negatives are missed
+
+**Algorithm Design:**
+1. Extract all examples with `is_available: false` from date range
+2. Deduplicate by website_url (keeping most recent)
+3. Validate negative examples meet quality criteria
+4. Add all unique negative examples to curated dataset
+
+#### Phase 16.3: Positive Case Optimization `M` 
+**Objective**: Select representative positive examples with domain diversity
+
+**Strategy:**
+- **Domain Diversity**: Prefer unique domains/subdomains for variety
+- **URL Uniqueness**: No duplicate website_urls across entire dataset
+- **Quality Scoring**: Prioritize examples with comprehensive data
+- **Balanced Representation**: Cover different types of positive availability
+
+**Selection Algorithm:**
+1. Group positive examples by domain
+2. Select best example from each domain (quality scoring)
+3. Fill remaining slots with high-quality examples from any domain
+4. Ensure final dataset reaches target size (100 examples)
+
+#### Phase 16.4: Quality Validation `M`
+**Objective**: Validate curated dataset meets quality and balance requirements
+
+**Validation Criteria:**
+- **Size Compliance**: Exactly 100 examples (or justify if fewer)
+- **Negative Coverage**: All available false cases included
+- **URL Uniqueness**: No duplicate website_urls across dataset
+- **Domain Diversity**: Reasonable domain distribution for positive cases
+- **Data Completeness**: All examples have required fields (website_url, is_available, notes)
+
+### CLI Integration
+
+#### New Parameter
+```bash
+# ✅ VALID: --best-100 with availability eval_type
+lse eval create-dataset --project my-project --eval-type availability --date 2025-09-10 --best-100 --output curated_100.jsonl --name curated_availability
+
+# ❌ INVALID: --best-100 with other eval_types (will show error)
+lse eval create-dataset --project my-project --eval-type token_name --date 2025-09-10 --best-100 --output error.jsonl --name error
+lse eval create-dataset --project my-project --eval-type website --date 2025-09-10 --best-100 --output error.jsonl --name error
+```
+
+#### Behavior Changes
+- **Default Mode**: Without `--best-100`, maintain existing behavior (all examples)
+- **Curated Mode**: With `--best-100`, enable intelligent curation to ~100 examples
+- **Validation**: Warn if fewer than 100 examples available from date range
+- **Reporting**: Show curation statistics (negative count, positive count, domains covered)
+
+### Expected Output Format
+
+#### Example Output Statistics
+```
+✓ Created curated dataset 'curated_availability' with 97 examples
+  - Negative examples (is_available: false): 12 unique URLs
+  - Positive examples (is_available: true): 85 examples across 67 domains  
+  - Total examples: 97 (limited by available data)
+  - Saved to: curated_100.jsonl
+```
+
+#### Dataset Quality Metrics
+- **Negative Coverage**: 100% of false availability cases included
+- **URL Uniqueness**: 0 duplicate URLs in dataset
+- **Domain Diversity**: 60+ unique domains represented
+- **Representative Distribution**: Balanced mix of website types and availability patterns
+
+### Implementation Plan
+
+#### Phase 16.1: Core Curation Framework `M`
+**Deliverables:**
+- [ ] Add `--best-100` CLI parameter with typer integration
+- [ ] Implement `create_curated_dataset()` method in DatasetBuilder
+- [ ] Add curation logic to `create_dataset_from_db()` workflow
+- [ ] Create base curation infrastructure and interfaces
+
+**Acceptance Criteria:**
+- CLI parameter parsed and passed to dataset creation logic
+- Curation framework integrated with existing availability dataset creation
+- Code structure supports configurable target sizes (not hardcoded to 100)
+
+#### Phase 16.2: Negative Case Collection `M`
+**Deliverables:**
+- [ ] Implement `_extract_negative_examples()` with deduplication
+- [ ] Add URL uniqueness validation for negative cases
+- [ ] Create comprehensive negative case coverage logic
+- [ ] Add logging for negative case statistics
+
+**Acceptance Criteria:**
+- All `is_available: false` examples captured from date range
+- URL deduplication working correctly (most recent preferred)
+- No false negative examples missed or excluded
+
+#### Phase 16.3: Positive Case Selection `M`
+**Deliverables:**
+- [ ] Implement `_select_representative_positive_examples()` method
+- [ ] Add domain diversity optimization algorithm
+- [ ] Create quality scoring system for positive examples
+- [ ] Implement slot-filling logic for remaining capacity
+
+**Acceptance Criteria:**
+- Domain diversity maximized for positive examples
+- Quality scoring prioritizes examples with complete data
+- Target dataset size reached when sufficient data available
+
+#### Phase 16.4: Quality Assurance `M`
+**Deliverables:**
+- [ ] Add dataset validation for size, uniqueness, and completeness
+- [ ] Implement curation statistics reporting
+- [ ] Create comprehensive test suite for all curation logic
+- [ ] Add edge case handling for insufficient data scenarios
+
+**Acceptance Criteria:**
+- Dataset validation catches quality issues before output
+- Statistics provide clear insight into curation results
+- Edge cases handled gracefully (warn but don't fail)
+
+### Testing Strategy
+
+#### Unit Tests
+- **Negative Case Extraction**: Test with various false availability scenarios
+- **Deduplication Logic**: Verify URL uniqueness and recency preference
+- **Positive Case Selection**: Test domain diversity and quality scoring
+- **Dataset Validation**: Test size limits, uniqueness, and completeness
+
+#### Integration Tests  
+- **End-to-End Curation**: Full workflow from database to curated JSONL output
+- **CLI Integration**: Test `--best-100` parameter with various date ranges
+- **Quality Validation**: Verify curated datasets meet all quality criteria
+- **Statistics Reporting**: Test curation statistics accuracy
+
+#### Edge Case Tests
+- **Insufficient Data**: Test behavior when <100 examples available
+- **All Positive/Negative**: Test extreme distributions
+- **Duplicate URLs**: Test deduplication across positive and negative cases
+- **Domain Concentration**: Test when few domains dominate the data
+
+### Success Metrics
+
+#### Data Quality Metrics
+- **Negative Coverage**: 100% of false availability cases included in curated datasets
+- **URL Uniqueness**: 0% duplicate URLs across all curated datasets  
+- **Domain Diversity**: >80% unique domains for positive cases when sufficient data available
+- **Dataset Size**: Target size achieved or justified when not possible
+
+#### Performance Metrics
+- **Curation Speed**: Dataset curation adds <10% to creation time
+- **Memory Efficiency**: Curation logic handles large date ranges without memory issues
+- **Quality Validation**: Validation catches 100% of data quality issues
+
+#### User Experience Metrics
+- **Clear Statistics**: Users understand curation results from output statistics
+- **Predictable Behavior**: Curation results consistent across multiple runs
+- **Graceful Degradation**: Clear warnings when target size not achievable
+
+### Dependencies
+
+#### Required Completions
+- Phase 15 (Availability Dataset Root Run Priority Bug) ✅ **COMPLETED**
+- Existing availability dataset creation functionality ✅ **AVAILABLE**
+- Database access with sufficient availability data ✅ **AVAILABLE**
+
+#### Optional Enhancements  
+- Performance monitoring for curation process efficiency
+- Advanced quality scoring algorithms for positive example selection
+- Configurable curation parameters (not just --best-100)
 
 ---
 
