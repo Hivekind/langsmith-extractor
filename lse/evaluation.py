@@ -507,41 +507,77 @@ class TraceExtractor:
     def _meets_filtering_criteria(
         self, run_data: Dict[str, Any], eval_type: Optional[str] = None
     ) -> bool:
-        """Check if a run meets all filtering criteria.
+        """Check if a run meets filtering criteria for dataset inclusion.
 
-        Current criteria (strict for all eval types):
-        1. Must have final verdict feedback
-        2. Output final_decision must match feedback verdict (PASS-PASS or FAIL-FAIL)
-        3. Confidence must be >= 0.7
+        Availability eval_type uses simplified filtering - just needs website_url.
+        Other eval_types use existing strict criteria.
 
         Args:
           run_data: Raw run data
-          eval_type: Evaluation type (currently unused, all types use same strict criteria)
+          eval_type: Evaluation type (affects filtering criteria)
 
         Returns:
-          True if run meets ALL criteria
+          True if run meets criteria for the specified eval_type
         """
-        # 1. Must have final verdict feedback
-        if not self._has_final_verdict_feedback(run_data):
-            return False
+        if eval_type == "availability":
+            # Simplified criteria for availability: just needs website_url
+            return self._has_website_url(run_data)
+        else:
+            # Existing strict criteria for token_name and website eval_types
+            return (
+                self._has_final_verdict_feedback(run_data)
+                and self._has_matching_verdicts(run_data)
+                and self._has_sufficient_confidence(run_data)
+            )
 
-        # 2. Get feedback verdict and output decision
+    def _has_website_url(self, run_data: Dict[str, Any]) -> bool:
+        """Check if run_data contains website_url parameter.
+
+        Args:
+          run_data: Raw run data
+
+        Returns:
+          True if website_url is found in the run data
+        """
+        # Check direct inputs
+        inputs = run_data.get("inputs", {})
+        if "website_url" in inputs:
+            return True
+
+        # Check for nested website_url in various potential locations
+        # Common patterns in due-diligence API requests
+        if isinstance(inputs, dict):
+            # Check nested input structures
+            for key, value in inputs.items():
+                if isinstance(value, dict) and "website_url" in value:
+                    return True
+
+        return False
+
+    def _has_matching_verdicts(self, run_data: Dict[str, Any]) -> bool:
+        """Check if feedback verdict matches output decision.
+
+        Returns:
+          True if verdicts match (PASS-PASS or FAIL-FAIL)
+        """
         feedback_verdict = self._get_feedback_verdict(run_data)
-        final_decision, confidence = self._get_output_decision_and_confidence(run_data)
+        final_decision, _ = self._get_output_decision_and_confidence(run_data)
 
         # Must have both feedback verdict and output decision
         if not feedback_verdict or not final_decision:
             return False
 
         # Must have matching verdicts (PASS-PASS or FAIL-FAIL)
-        if feedback_verdict != final_decision:
-            return False
+        return feedback_verdict == final_decision
 
-        # 3. Must have confidence >= 0.7
-        if confidence is None or confidence < 0.7:
-            return False
+    def _has_sufficient_confidence(self, run_data: Dict[str, Any]) -> bool:
+        """Check if run has sufficient confidence score.
 
-        return True
+        Returns:
+          True if confidence >= 0.7
+        """
+        _, confidence = self._get_output_decision_and_confidence(run_data)
+        return confidence is not None and confidence >= 0.7
 
 
 class DatasetBuilder:
@@ -686,6 +722,12 @@ class DatasetBuilder:
                 # Extract reference data (human feedback, verdicts)
                 run_reference = self._extract_reference(run_data)
                 self._deep_merge_dict(all_reference, run_reference)
+
+            # Apply format-specific transformations if needed
+            if eval_type:
+                all_inputs, all_outputs, all_reference = self._apply_format(
+                    all_inputs, all_outputs, all_reference, eval_type
+                )
 
             return DatasetExample(
                 inputs=all_inputs,
@@ -954,6 +996,71 @@ class DatasetBuilder:
             else:
                 outputs["is_malicious"] = bool(trace_outputs.get("is_malicious", False))
 
+        # Availability-specific fields (for notes/error messages)
+        self._extract_availability_notes(outputs, website_analysis, trace_outputs)
+
+    def _extract_availability_notes(
+        self, outputs: dict, website_analysis: dict, trace_outputs: dict
+    ):
+        """Extract availability notes/error messages for availability evaluation."""
+        notes = ""
+
+        # Check for availability notes in website_analysis
+        if website_analysis:
+            # Look for error messages or availability notes
+            if "error_message" in website_analysis:
+                notes = website_analysis["error_message"]
+            elif "availability_notes" in website_analysis:
+                notes = website_analysis["availability_notes"]
+            elif "notes" in website_analysis:
+                notes = website_analysis["notes"]
+
+        # Fallback to trace outputs
+        if not notes and trace_outputs:
+            if "error_message" in trace_outputs:
+                notes = trace_outputs["error_message"]
+            elif "availability_notes" in trace_outputs:
+                notes = trace_outputs["availability_notes"]
+            elif "notes" in trace_outputs:
+                notes = trace_outputs["notes"]
+
+        # Generate descriptive notes based on available data and inferred availability
+        if not notes:
+            is_available = outputs.get("is_available", False)
+            
+            # Try to infer availability from the presence of scraped data or analysis results
+            has_project_info = bool(trace_outputs.get("project_info"))
+            has_social_links = bool(trace_outputs.get("social_links"))
+            has_page_links = bool(trace_outputs.get("page_links"))
+            has_website_analysis = bool(trace_outputs.get("website_analysis"))
+            has_name_analysis = bool(trace_outputs.get("name_analysis"))
+            
+            # Check if this appears to be a successful scraping/analysis result
+            if has_project_info or has_social_links or has_page_links:
+                notes = "Website accessible - content successfully scraped"
+                outputs["is_available"] = True
+            elif has_website_analysis or has_name_analysis:
+                notes = "Website accessible - analysis completed successfully"
+                outputs["is_available"] = True
+            elif trace_outputs.get("final_decision") == "PASS":
+                notes = "Website accessible - evaluation completed with PASS decision"
+                outputs["is_available"] = True
+            elif trace_outputs.get("final_decision") == "FAIL":
+                notes = "Website accessibility issues - evaluation resulted in FAIL decision"
+                outputs["is_available"] = False
+            elif is_available:
+                notes = "Website appears to be accessible"
+            else:
+                # Check for potential error indicators
+                outputs_str = str(trace_outputs).lower()
+                if "error" in outputs_str or "failed" in outputs_str or "timeout" in outputs_str:
+                    notes = "Website may be unavailable - errors detected during access"
+                    outputs["is_available"] = False
+                else:
+                    notes = "Website availability status unclear"
+
+        outputs["notes"] = str(notes) if notes else ""
+
     def _extract_reference(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract human feedback/reference from trace data."""
         reference = {}
@@ -999,6 +1106,8 @@ class DatasetBuilder:
             return self._format_token_name(inputs, outputs, reference)
         elif eval_type == "website":
             return self._format_website(inputs, outputs, reference)
+        elif eval_type == "availability":
+            return self._format_availability(inputs, outputs, reference)
         else:
             # For unknown eval_types, return as-is
             return inputs, outputs, reference
@@ -1074,6 +1183,36 @@ class DatasetBuilder:
         }
 
         return formatted_inputs, formatted_outputs, reference
+
+    def _format_availability(
+        self,
+        inputs: Dict[str, Any],
+        outputs: Dict[str, Any],
+        reference: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """Format data for availability evaluation type.
+
+        Args:
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
+          reference: Reference data
+
+        Returns:
+          Formatted inputs, outputs, and reference for availability evaluation
+        """
+        # Format inputs - extract website_url only
+        formatted_inputs = {"website_url": inputs.get("website_url", "")}
+
+        # Format outputs - boolean availability with notes
+        formatted_outputs = {
+            "is_available": outputs.get("is_available", False),
+            "notes": outputs.get("notes", ""),
+        }
+
+        # Reference data minimal (availability doesn't use complex feedback)
+        formatted_reference = reference
+
+        return formatted_inputs, formatted_outputs, formatted_reference
 
     def _deep_merge_dict(self, target: dict, source: dict) -> None:
         """Deep merge source dictionary into target dictionary.

@@ -127,7 +127,35 @@ class TestCreateDatasetCommand:
         )
 
         assert result.exit_code == 1
-        assert "must be either 'token_name' or 'website'" in result.stdout
+        assert "must be 'token_name', 'website', or 'availability'" in result.stdout
+
+    def test_create_dataset_availability_eval_type_validation(self):
+        """Test that availability eval type passes CLI validation."""
+        with patch("lse.commands.eval.DatasetBuilder") as mock_builder_class:
+            # Mock successful dataset creation to avoid database dependency
+            mock_builder = MagicMock()
+            mock_builder_class.return_value = mock_builder
+
+            mock_dataset = MagicMock()
+            mock_dataset.name = "test_availability_dataset"
+            mock_builder.create_dataset_from_db = AsyncMock(return_value=mock_dataset)
+
+            result = runner.invoke(
+                app,
+                [
+                    "create-dataset",
+                    "--project",
+                    "test-project",
+                    "--eval-type",
+                    "availability",  # This should pass validation
+                    "--date",
+                    "2025-01-01",
+                ],
+            )
+
+            # Should pass validation (no exit with error code 1)
+            # Note: May still fail due to database connection, but validation should pass
+            assert "must be 'token_name', 'website', or 'availability'" not in result.stdout
 
     def test_create_dataset_conflicting_date_params(self):
         """Test dataset creation with conflicting date parameters."""

@@ -26,7 +26,10 @@ def create_dataset(
         ..., "--project", help="Project name to create dataset from", show_default=False
     ),
     eval_type: str = typer.Option(
-        ..., "--eval-type", help="Evaluation type: 'token_name' or 'website'", show_default=False
+        ...,
+        "--eval-type",
+        help="Evaluation type: 'token_name', 'website', or 'availability'",
+        show_default=False,
     ),
     date: Optional[str] = typer.Option(
         None, "--date", help="Single date in YYYY-MM-DD format (UTC)"
@@ -49,15 +52,18 @@ def create_dataset(
 
     Examples:
       # Single date
-      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type accuracy
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type token_name
 
       # Date range
-      lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type accuracy
+      lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type website
+
+      # Availability evaluation
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability
     """
     # Validate eval_type parameter
-    if eval_type not in ["token_name", "website"]:
+    if eval_type not in ["token_name", "website", "availability"]:
         console.print(
-            f"[red]Error: --eval-type must be either 'token_name' or 'website', got '{eval_type}'[/red]"
+            f"[red]Error: --eval-type must be 'token_name', 'website', or 'availability', got '{eval_type}'[/red]"
         )
         raise typer.Exit(1)
 

@@ -406,3 +406,55 @@ class TestLangSmithUploader:
         assert result == "dataset-456"
         # Verify read_dataset was called to check existing dataset
         mock_client.read_dataset.assert_called_once_with(dataset_name="test-dataset")
+
+
+class TestAvailabilityFormatting:
+    """Tests for availability evaluation type formatting."""
+
+    def test_format_availability_basic(self):
+        """Test basic availability formatting."""
+        builder = DatasetBuilder()
+
+        inputs = {"website_url": "https://ethereum.org"}
+        outputs = {"is_available": True, "notes": "Website is accessible"}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._format_availability(
+            inputs, outputs, reference
+        )
+
+        assert formatted_inputs == {"website_url": "https://ethereum.org"}
+        assert formatted_outputs == {"is_available": True, "notes": "Website is accessible"}
+        assert formatted_reference == reference
+
+    def test_format_availability_missing_data(self):
+        """Test availability formatting with missing data."""
+        builder = DatasetBuilder()
+
+        inputs = {}
+        outputs = {}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._format_availability(
+            inputs, outputs, reference
+        )
+
+        assert formatted_inputs == {"website_url": ""}
+        assert formatted_outputs == {"is_available": False, "notes": ""}
+        assert formatted_reference == reference
+
+    def test_apply_format_availability(self):
+        """Test _apply_format dispatches to availability formatter."""
+        builder = DatasetBuilder()
+
+        inputs = {"website_url": "https://test.com"}
+        outputs = {"is_available": False, "notes": "DNS resolution failed"}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._apply_format(
+            inputs, outputs, reference, "availability"
+        )
+
+        assert formatted_inputs == {"website_url": "https://test.com"}
+        assert formatted_outputs == {"is_available": False, "notes": "DNS resolution failed"}
+        assert formatted_reference == reference
