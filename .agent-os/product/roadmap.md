@@ -17,6 +17,7 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [Phase 11: Reporting Database Migration](#phase-11-reporting-database-migration-) ✅ **COMPLETED**
 - [**Phase 12: Critical Feedback Data Loss Fix**](#phase-12-critical-feedback-data-loss-fix--urgent) 🚨 **URGENT**
 - [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
+- [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) 🚨 **URGENT**
 
 ---
 
@@ -35,6 +36,7 @@ LangSmith Extractor enables teams to extract, analyze, and archive LangSmith tra
 ### 🚨 Critical Issues
 - **Phase 12**: **Critical feedback data loss** - detailed feedback rationale missing from extraction
 - **Phase 13**: **Dataset format generation** - eval create-dataset producing wrong output format
+- **Phase 15**: **Availability dataset root run priority** - child runs overriding correct root run availability status
 
 ---
 
@@ -1233,6 +1235,193 @@ lse eval create-dataset --project my-project --date 2025-01-15 --eval-type websi
 - **Test Coverage**: >95% coverage with dedicated format validation tests  
 - **Performance**: Dataset generation maintains current performance levels
 - **Compatibility**: Generated datasets work correctly with existing LangSmith upload workflow
+
+## Phase 15: Availability Dataset Root Run Priority Bug 🚨 **URGENT**
+
+**Goal:** Fix availability dataset creation to prioritize root run data over child run data  
+**Success Criteria:** Availability datasets accurately reflect root run's `is_available` status without contamination from incomplete child runs
+
+### 🚨 Critical Problem Statement
+**Data Accuracy Issue Identified**: The availability dataset creation produces incorrect availability status due to child run contamination:
+
+1. **Root Run Data Ignored**: Root runs (where `trace_id == run_id`) contain authoritative availability status
+2. **Child Run Contamination**: Child runs with incomplete or missing `is_available` data override correct root run values
+3. **Data Aggregation Flaw**: `_deep_merge_dict()` allows later child runs to overwrite correct root run data
+4. **Business Impact**: Datasets contain incorrect availability status, making them unreliable for evaluation workflows
+5. **Scope**: Affects all availability datasets created since Phase 14 implementation
+
+### Problem Evidence
+
+**Database Evidence**: 
+- Root run (`49751c71-4b79-469e-90cb-b83241e3afa1`): `is_available: true` ✅
+- Child runs: Some have `is_available: null/undefined` ❌
+- Generated dataset: `is_available: false` ❌ **WRONG**
+
+**Expected vs Actual**:
+```json
+// Expected (from root run)
+{"inputs": {"website_url": "https://x.com/FooExample"}, "outputs": {"is_available": true}}
+
+// Actual (contaminated by child runs)  
+{"inputs": {"website_url": "https://x.com/FooExample"}, "outputs": {"is_available": false}}
+```
+
+### Solution Design
+
+#### Core Fix: Root Run Prioritization
+**Priority Order for Data Extraction**:
+1. **Root Run First**: Extract data from run where `trace_id == run_id`
+2. **Child Run Fallback**: Only use child runs if root run lacks specific fields
+3. **Never Override**: Child runs cannot override root run's authoritative data
+
+#### Implementation Strategy
+
+**Phase 15.1: Root Run Identification** `M`
+- Modify `_build_example_from_runs()` to identify root run (`trace_id == run_id`)
+- Extract root run data with highest priority
+- Create separate extraction paths for root vs child runs
+
+**Phase 15.2: Hierarchical Data Extraction** `M`  
+- Update `_extract_outputs()` to prioritize root run availability data
+- Implement fallback logic that only uses child runs for missing fields
+- Ensure `is_available` status always comes from root run when available
+
+**Phase 15.3: Deep Merge Logic Fix** `M`
+- Modify data aggregation to prevent child run override of root run data
+- Implement priority-based merging instead of sequential overwriting
+- Add validation to ensure critical fields maintain root run values
+
+**Phase 15.4: Availability-Specific Logic** `M`
+- Update `_extract_availability_notes()` to use root run data for availability inference
+- Ensure availability status determination follows root run → child run priority
+- Add logging to track which run data is being used for availability decisions
+
+### Technical Implementation
+
+#### File Modifications Required
+
+**Core Implementation**:
+```python
+# /lse/evaluation.py - _build_example_from_runs() method
+def _build_example_from_runs(self, trace_metadata, run_data_list, eval_type=None):
+    # 1. Identify root run (where trace_id == run_id)
+    root_run = None
+    child_runs = []
+    
+    for run_data in run_data_list:
+        if run_data.get('trace_id') == run_data.get('run_id'):
+            root_run = run_data
+        else:
+            child_runs.append(run_data)
+    
+    # 2. Extract data with root run priority
+    if eval_type == "availability":
+        # Use root-run-priority extraction for availability
+        all_inputs, all_outputs, all_reference = self._extract_with_priority(
+            root_run, child_runs, eval_type
+        )
+    else:
+        # Use existing logic for other eval types
+        # ... existing code ...
+```
+
+#### Root Run Priority Extraction Logic
+```python
+def _extract_with_priority(self, root_run, child_runs, eval_type):
+    """Extract data with root run taking priority over child runs."""
+    
+    # Start with root run data
+    primary_inputs = self._extract_inputs(root_run) if root_run else {}
+    primary_outputs = self._extract_outputs(root_run) if root_run else {}
+    primary_reference = self._extract_reference(root_run) if root_run else {}
+    
+    # Fill gaps with child run data (but never override root run critical fields)
+    for child_run in child_runs:
+        child_inputs = self._extract_inputs(child_run)
+        child_outputs = self._extract_outputs(child_run)
+        child_reference = self._extract_reference(child_run)
+        
+        # Merge inputs (child can fill missing fields)
+        self._merge_with_priority(primary_inputs, child_inputs, priority_fields=[])
+        
+        # Merge outputs (root run availability data has priority)
+        priority_fields = ["is_available", "notes"] if eval_type == "availability" else []
+        self._merge_with_priority(primary_outputs, child_outputs, priority_fields)
+        
+        # Merge reference (child can fill missing fields)
+        self._merge_with_priority(primary_reference, child_reference, priority_fields=[])
+    
+    return primary_inputs, primary_outputs, primary_reference
+```
+
+### Quality Gates
+
+#### Phase 15.1 Completion Criteria
+- [ ] Root run identification works correctly for all traces
+- [ ] Root run vs child run separation logic implemented and tested
+- [ ] Database queries correctly identify trace hierarchies
+
+#### Phase 15.2 Completion Criteria
+- [ ] Root run data extraction prioritizes authoritative availability status
+- [ ] Child run fallback logic works for missing fields only
+- [ ] Availability status never overridden by incomplete child run data
+
+#### Phase 15.3 Completion Criteria  
+- [ ] Data merging respects root run priority for critical fields
+- [ ] Child runs can only supplement, not override, root run data
+- [ ] Availability datasets show correct root run `is_available` status
+
+#### Phase 15.4 Completion Criteria
+- [ ] All availability-specific logic uses root run priority
+- [ ] Notes generation reflects root run availability status
+- [ ] End-to-end testing validates fix with problematic trace examples
+
+### Test Cases
+
+#### Critical Test Case (Foo Example)
+```python
+def test_foo_availability_fix():
+    """Test that Foo trace shows correct availability from root run."""
+    trace_id = "49751c71-4b79-469e-90cb-b83241e3afa1"
+    
+    # This should return is_available: true (from root run)
+    # NOT is_available: false (from child run contamination)
+    dataset = create_dataset_for_trace(trace_id, eval_type="availability")
+    
+    foo_example = find_example_by_url(dataset, "https://x.com/FooExample")
+    assert foo_example["outputs"]["is_available"] == True
+```
+
+#### Regression Tests
+- [ ] Test traces with complete root run data
+- [ ] Test traces with incomplete child run data
+- [ ] Test traces with conflicting availability status between runs
+- [ ] Test traces with missing root run data (fallback scenarios)
+
+### Risk Assessment
+
+#### Critical Risks
+- **Data Integrity**: Fix must not corrupt non-availability eval types
+- **Performance Impact**: Root run identification might slow dataset creation
+- **Edge Cases**: Complex trace hierarchies might have unexpected structures
+- **Regression**: Changes could affect token_name and website eval types
+
+#### Mitigation Strategies
+- **Selective Application**: Apply root run priority only to availability eval_type
+- **Comprehensive Testing**: Test all eval_types to prevent regressions
+- **Performance Monitoring**: Benchmark dataset creation times before/after fix
+- **Gradual Rollout**: Test fix on small datasets before full deployment
+
+### Success Metrics
+- **Data Accuracy**: 100% of availability datasets reflect correct root run status
+- **No Regressions**: Other eval_types maintain current functionality
+- **Test Coverage**: >95% coverage for root run priority logic
+- **Performance**: Dataset creation time impact <10%
+
+### Dependencies
+- Phase 14 (Availability Evaluation Type) completed ✅
+- Access to problematic trace examples for testing ✅
+- Database with trace hierarchy data available ✅
 
 ---
 
