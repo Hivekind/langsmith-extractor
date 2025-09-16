@@ -141,6 +141,9 @@ def create_dataset(
     with open(output_path, "w") as f:
         for example in dataset.examples:
             simplified_example = {"inputs": example.inputs, "outputs": example.outputs}
+            # Include metadata if available (contains trace_id, project, date)
+            if example.metadata:
+                simplified_example["metadata"] = example.metadata
             json.dump(simplified_example, f, separators=(",", ":"))
             f.write("\n")
 
