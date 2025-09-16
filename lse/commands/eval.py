@@ -44,6 +44,11 @@ def create_dataset(
     name: Optional[str] = typer.Option(
         None, "--name", help="Dataset name (auto-generated if not provided)"
     ),
+    best_100: bool = typer.Option(
+        False,
+        "--best-100",
+        help="Create curated 100-example dataset with optimal representation (availability eval_type only)",
+    ),
 ):
     """Create evaluation dataset directly from database with date range support.
 
@@ -59,12 +64,24 @@ def create_dataset(
 
       # Availability evaluation
       lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability
+
+      # Curated 100-example availability dataset (availability only)
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability --best-100
     """
     # Validate eval_type parameter
     if eval_type not in ["token_name", "website", "availability"]:
         console.print(
             f"[red]Error: --eval-type must be 'token_name', 'website', or 'availability', got '{eval_type}'[/red]"
         )
+        raise typer.Exit(1)
+
+    # Validate --best-100 parameter (CRITICAL CONSTRAINT: availability only)
+    if best_100 and eval_type != "availability":
+        console.print(
+            "[red]Error: --best-100 parameter is only allowed with --eval-type availability[/red]"
+        )
+        console.print(f"[yellow]  Current eval_type: {eval_type}[/yellow]")
+        console.print("[cyan]  Suggestion: Use '--eval-type availability' with --best-100[/cyan]")
         raise typer.Exit(1)
 
     # Validate date parameters
@@ -90,7 +107,7 @@ def create_dataset(
         db_manager = await create_database_manager()
 
         try:
-            builder = DatasetBuilder(database=db_manager)
+            builder = DatasetBuilder(database=db_manager, curation_enabled=best_100)
 
             with Progress(
                 SpinnerColumn(),

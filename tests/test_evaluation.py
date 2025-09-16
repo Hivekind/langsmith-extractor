@@ -798,3 +798,284 @@ class TestRootRunPriority:
         assert ("extract_inputs", "run-2") in calls_made
         assert ("extract_outputs", "run-1") in calls_made
         assert ("extract_outputs", "run-2") in calls_made
+
+
+class TestDatasetCuration:
+    """Tests for dataset curation functionality."""
+
+    def test_curate_dataset_basic(self):
+        """Test basic dataset curation with mixed positive and negative examples."""
+        builder = DatasetBuilder(curation_enabled=True)
+
+        examples = [
+            # Negative examples (should all be included)
+            DatasetExample(
+                inputs={"website_url": "https://unavailable1.com"},
+                outputs={"is_available": False, "notes": "Site down"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://unavailable2.com"},
+                outputs={"is_available": False, "notes": "DNS error"},
+            ),
+            # Positive examples from different domains (should be selected for diversity)
+            DatasetExample(
+                inputs={"website_url": "https://example.com"},
+                outputs={"is_available": True, "notes": "Working fine"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://google.com"},
+                outputs={"is_available": True, "notes": "Success"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://github.com"},
+                outputs={"is_available": True, "notes": "Available"},
+            ),
+        ]
+
+        curated = builder._curate_dataset(examples, target_size=5)
+
+        # Should include all negative examples plus positive ones
+        assert len(curated) == 5
+        negative_count = len([ex for ex in curated if not ex.outputs.get("is_available")])
+        positive_count = len([ex for ex in curated if ex.outputs.get("is_available")])
+        assert negative_count == 2
+        assert positive_count == 3
+
+    def test_extract_negative_examples_with_deduplication(self):
+        """Test negative example extraction with URL deduplication."""
+        builder = DatasetBuilder()
+
+        examples = [
+            # Duplicate URLs (should be deduplicated)
+            DatasetExample(
+                inputs={"website_url": "https://www.duplicate.com/"},
+                outputs={"is_available": False, "notes": "First"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "http://duplicate.com"},
+                outputs={"is_available": False, "notes": "Second"},  # Should be deduplicated
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://unique.com"},
+                outputs={"is_available": False, "notes": "Unique"},
+            ),
+            # Positive example (should be ignored)
+            DatasetExample(
+                inputs={"website_url": "https://positive.com"},
+                outputs={"is_available": True, "notes": "Available"},
+            ),
+        ]
+
+        negative_examples = builder._extract_negative_examples(examples)
+
+        # Should have 2 unique negative examples (duplicate.com deduplicated)
+        assert len(negative_examples) == 2
+        urls = [builder._get_website_url(ex) for ex in negative_examples]
+        normalized_urls = [builder._normalize_url(url) for url in urls]
+        assert "duplicate.com" in normalized_urls
+        assert "unique.com" in normalized_urls
+
+    def test_select_representative_positive_examples_domain_diversity(self):
+        """Test positive example selection with domain diversity optimization."""
+        builder = DatasetBuilder()
+
+        positive_examples = [
+            # Multiple examples from same domain
+            DatasetExample(
+                inputs={"website_url": "https://example.com/page1"},
+                outputs={"is_available": True, "notes": "Page 1 - quality score 2.5"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://example.com/page2"},
+                outputs={
+                    "is_available": True,
+                    "notes": "Page 2 success completed found - quality score 3.3",
+                },  # Higher quality
+            ),
+            # Different domains
+            DatasetExample(
+                inputs={"website_url": "https://google.com"},
+                outputs={"is_available": True, "notes": "Google works"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://github.com"},
+                outputs={"is_available": True, "notes": "GitHub available"},
+            ),
+        ]
+
+        selected = builder._select_representative_positive_examples(positive_examples, capacity=3)
+
+        # Should select best from each domain (3 unique domains, capacity allows all)
+        assert len(selected) == 3
+        domains = [builder._extract_domain(builder._get_website_url(ex)) for ex in selected]
+        assert "example.com" in domains
+        assert "google.com" in domains
+        assert "github.com" in domains
+
+        # Should select higher quality example from example.com domain
+        example_com_selected = [
+            ex for ex in selected if "example.com" in builder._get_website_url(ex)
+        ][0]
+        assert "Page 2" in example_com_selected.outputs["notes"]  # Higher quality one
+
+    def test_validate_curated_dataset_success(self):
+        """Test dataset validation with valid curated examples."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": "https://example.com"},
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://different.com"},
+                outputs={"is_available": False, "notes": "Down"},
+            ),
+        ]
+
+        # Should not raise any exception
+        builder._validate_curated_dataset(examples)
+
+    def test_validate_curated_dataset_duplicate_urls(self):
+        """Test dataset validation fails with duplicate URLs."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": "https://www.example.com/"},
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "http://example.com"},  # Duplicate after normalization
+                outputs={"is_available": False, "notes": "Down"},
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="duplicate URLs"):
+            builder._validate_curated_dataset(examples)
+
+    def test_validate_curated_dataset_missing_fields(self):
+        """Test dataset validation fails with missing required fields."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": ""},  # Missing URL
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="missing website_url"):
+            builder._validate_curated_dataset(examples)
+
+    def test_normalize_url(self):
+        """Test URL normalization for deduplication."""
+        builder = DatasetBuilder()
+
+        # Test various URL formats that should normalize to same value
+        test_cases = [
+            "https://www.example.com/",
+            "http://www.example.com",
+            "https://example.com/",
+            "http://example.com",
+            "HTTPS://WWW.EXAMPLE.COM/",
+        ]
+
+        normalized_urls = [builder._normalize_url(url) for url in test_cases]
+
+        # All should normalize to the same value
+        assert len(set(normalized_urls)) == 1
+        assert normalized_urls[0] == "example.com"
+
+    def test_extract_domain(self):
+        """Test domain extraction for diversity analysis."""
+        builder = DatasetBuilder()
+
+        test_cases = [
+            ("https://www.example.com/page", "example.com"),
+            ("http://subdomain.test.org", "subdomain.test.org"),
+            ("github.com/user/repo", "github.com"),  # No protocol
+            ("https://site.com:3000", "site.com"),  # Port number removed
+            ("invalid-url", "unknown"),
+        ]
+
+        for url, expected_domain in test_cases:
+            assert builder._extract_domain(url) == expected_domain
+
+    def test_calculate_quality_score(self):
+        """Test quality scoring system for positive examples."""
+        builder = DatasetBuilder()
+
+        # High quality example (has URL, is_available, good notes with success indicators)
+        high_quality = DatasetExample(
+            inputs={"website_url": "https://example.com"},
+            outputs={
+                "is_available": True,
+                "notes": "Website working perfectly, found all content successfully",
+            },
+        )
+
+        # Medium quality example (basic fields, shorter notes)
+        medium_quality = DatasetExample(
+            inputs={"website_url": "https://test.com"},
+            outputs={"is_available": True, "notes": "Working"},
+        )
+
+        # Low quality example (missing URL)
+        low_quality = DatasetExample(
+            inputs={"website_url": ""}, outputs={"is_available": True, "notes": ""}
+        )
+
+        high_score = builder._calculate_quality_score(high_quality)
+        medium_score = builder._calculate_quality_score(medium_quality)
+        low_score = builder._calculate_quality_score(low_quality)
+
+        assert high_score > medium_score > low_score
+        assert high_score >= 2.8  # Base (2.0) + notes (0.5) + success indicators (0.3)
+        assert medium_score >= 2.0  # Base fields only
+        assert low_score <= 1.0  # Missing URL
+
+    def test_curation_integration_with_constructor(self):
+        """Test that curation_enabled flag is properly stored and used."""
+        builder_with_curation = DatasetBuilder(curation_enabled=True)
+        builder_without_curation = DatasetBuilder(curation_enabled=False)
+
+        assert builder_with_curation.curation_enabled is True
+        assert builder_without_curation.curation_enabled is False
+
+        # Test default value
+        builder_default = DatasetBuilder()
+        assert builder_default.curation_enabled is False
+
+    def test_curate_dataset_target_size_limit(self):
+        """Test that curation respects target size limits."""
+        builder = DatasetBuilder(curation_enabled=True)
+
+        # Create many examples, more than target size
+        examples = []
+        # Add 5 negative examples
+        for i in range(5):
+            examples.append(
+                DatasetExample(
+                    inputs={"website_url": f"https://negative{i}.com"},
+                    outputs={"is_available": False, "notes": f"Down {i}"},
+                )
+            )
+
+        # Add 10 positive examples from different domains
+        for i in range(10):
+            examples.append(
+                DatasetExample(
+                    inputs={"website_url": f"https://positive{i}.com"},
+                    outputs={"is_available": True, "notes": f"Working {i}"},
+                )
+            )
+
+        curated = builder._curate_dataset(examples, target_size=8)
+
+        # Should have at most 8 examples: 5 negatives + 3 best positives
+        assert len(curated) == 8
+        negative_count = len([ex for ex in curated if not ex.outputs.get("is_available")])
+        positive_count = len([ex for ex in curated if ex.outputs.get("is_available")])
+        assert negative_count == 5  # All negative examples included
+        assert positive_count == 3  # Only 3 positive examples fit

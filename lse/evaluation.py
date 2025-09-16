@@ -584,16 +584,21 @@ class DatasetBuilder:
     """Build evaluation datasets from extracted traces."""
 
     def __init__(
-        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+        self,
+        storage: Optional[TraceStorage] = None,
+        database: Optional[DatabaseManager] = None,
+        curation_enabled: bool = False,
     ):
         """Initialize the dataset builder.
 
         Args:
           storage: TraceStorage instance for accessing stored traces
           database: DatabaseManager instance for accessing database
+          curation_enabled: Enable dataset curation for optimal 100-example selection
         """
         self.storage = storage or TraceStorage(get_settings())
         self.database = database
+        self.curation_enabled = curation_enabled
 
     def build_dataset(
         self,
@@ -680,8 +685,16 @@ class DatasetBuilder:
                     if example:
                         examples.append(example)
 
+        # Apply curation if enabled
+        if self.curation_enabled and eval_type == "availability":
+            examples = self._curate_dataset(examples, target_size=100)
+            self._print_curation_statistics(examples)
+
         # Create dataset
         dataset_name = f"{project}_{eval_type}_{start_date}_{end_date}"
+        if self.curation_enabled:
+            dataset_name += "_best100"
+
         return EvaluationDataset(
             name=dataset_name,
             description=f"Evaluation dataset for {project} from {start_date} to {end_date}",
@@ -993,9 +1006,16 @@ class DatasetBuilder:
 
         # Website-specific fields - check both analysis and direct fields
         if website_analysis or trace_outputs.get("is_available") is not None:
-            outputs["is_available"] = bool(
-                website_analysis.get("is_available", trace_outputs.get("is_available", True))
+            website_is_available = website_analysis.get("is_available")
+            trace_is_available = trace_outputs.get("is_available")
+            final_is_available = (
+                website_is_available
+                if website_is_available is not None
+                else trace_is_available
+                if trace_is_available is not None
+                else True
             )
+            outputs["is_available"] = bool(final_is_available)
 
             malicious_check = website_analysis.get("malicious_check")
             if isinstance(malicious_check, dict):
@@ -1052,8 +1072,17 @@ class DatasetBuilder:
                 notes = "Website accessible - content successfully scraped"
                 outputs["is_available"] = True
             elif has_website_analysis or has_name_analysis:
-                notes = "Website accessible - analysis completed successfully"
-                outputs["is_available"] = True
+                # Don't override is_available - analysis may have determined website is not available
+                # Only set to True if we don't already have a determination
+                if outputs.get("is_available") is None:
+                    notes = "Website accessible - analysis completed successfully"
+                    outputs["is_available"] = True
+                else:
+                    # Use the availability determination from the analysis
+                    if outputs.get("is_available"):
+                        notes = "Website accessible - analysis completed successfully"
+                    else:
+                        notes = "Website not accessible - analysis completed"
             elif trace_outputs.get("final_decision") == "PASS":
                 notes = "Website accessible - evaluation completed with PASS decision"
                 outputs["is_available"] = True
@@ -1329,6 +1358,7 @@ class DatasetBuilder:
         Returns:
             Tuple of (inputs, outputs, reference) dictionaries
         """
+
         # Phase 1: Extract from root run (authoritative)
         primary_inputs = self._extract_inputs(root_run) if root_run else {}
         primary_outputs = self._extract_outputs(root_run) if root_run else {}
@@ -1354,6 +1384,304 @@ class DatasetBuilder:
             )
 
         return primary_inputs, primary_outputs, primary_reference
+
+    def _curate_dataset(
+        self, examples: List[DatasetExample], target_size: int = 100
+    ) -> List[DatasetExample]:
+        """Curate dataset to optimal size with representative examples.
+
+        Algorithm:
+        1. Extract ALL negative examples (is_available: false) with URL deduplication
+        2. Select representative positive examples with domain diversity
+        3. Fill remaining slots with highest quality positive examples
+        4. Validate final dataset meets quality requirements
+
+        Args:
+            examples: All available examples
+            target_size: Target dataset size (default 100)
+
+        Returns:
+            Curated list of examples, up to target_size
+        """
+        console.print(
+            f"[blue]Curating dataset: {len(examples)} examples -> up to {target_size} examples[/blue]"
+        )
+
+        # Step 1: Extract all negative examples with deduplication
+        negative_examples = self._extract_negative_examples(examples)
+
+        # Step 2: Select representative positive examples (excluding negative URLs)
+        negative_urls = set(
+            self._normalize_url(self._get_website_url(ex)) for ex in negative_examples
+        )
+        positive_examples = [
+            ex
+            for ex in examples
+            if self._get_is_available(ex)
+            and self._normalize_url(self._get_website_url(ex)) not in negative_urls
+        ]
+
+        remaining_capacity = max(0, target_size - len(negative_examples))
+        selected_positives = self._select_representative_positive_examples(
+            positive_examples, remaining_capacity
+        )
+
+        # Step 3: Combine and validate
+        curated_examples = negative_examples + selected_positives
+        self._validate_curated_dataset(curated_examples)
+
+        return curated_examples
+
+    def _extract_negative_examples(self, examples: List[DatasetExample]) -> List[DatasetExample]:
+        """Extract all negative examples with URL-based deduplication.
+
+        Args:
+            examples: All available examples
+
+        Returns:
+            List of unique negative examples, prioritized by recency
+        """
+        # Filter for negative examples (is_available: false)
+        negative_examples = [ex for ex in examples if not self._get_is_available(ex)]
+
+        console.print(
+            f"[blue]Found {len(negative_examples)} negative examples from {len(examples)} total examples[/blue]"
+        )
+
+        if not negative_examples:
+            return []
+
+        # Group by normalized URL for deduplication
+        url_groups = {}
+        for example in negative_examples:
+            url = self._normalize_url(self._get_website_url(example))
+            if url not in url_groups:
+                url_groups[url] = []
+            url_groups[url].append(example)
+
+        # Select best example from each URL group (prioritize recency)
+        deduplicated = []
+        for url, group in url_groups.items():
+            # Sort by quality and recency (implement prioritization logic)
+            best_example = self._prioritize_by_recency(group)
+            deduplicated.append(best_example)
+
+        console.print(
+            f"[green]Extracted {len(deduplicated)} unique negative examples (deduplicated from {len(negative_examples)})[/green]"
+        )
+        return deduplicated
+
+    def _select_representative_positive_examples(
+        self, positive_examples: List[DatasetExample], capacity: int
+    ) -> List[DatasetExample]:
+        """Select representative positive examples with domain diversity optimization.
+
+        Args:
+            positive_examples: All positive examples
+            capacity: Available slots for positive examples
+
+        Returns:
+            List of selected positive examples up to capacity
+        """
+        if not positive_examples or capacity <= 0:
+            return []
+
+        # First, deduplicate positive examples by normalized URL
+        url_groups = {}
+        for example in positive_examples:
+            normalized_url = self._normalize_url(self._get_website_url(example))
+            if normalized_url not in url_groups:
+                url_groups[normalized_url] = []
+            url_groups[normalized_url].append(example)
+
+        # Select best example from each unique URL
+        deduplicated_positives = []
+        for url, group in url_groups.items():
+            best_example = max(group, key=self._calculate_quality_score)
+            deduplicated_positives.append(best_example)
+
+        console.print(
+            f"[blue]Deduplicated positive examples: {len(deduplicated_positives)} unique URLs from {len(positive_examples)} total[/blue]"
+        )
+
+        # Now group deduplicated examples by domain for diversity optimization
+        domain_groups = {}
+        for example in deduplicated_positives:
+            domain = self._extract_domain(self._get_website_url(example))
+            if domain not in domain_groups:
+                domain_groups[domain] = []
+            domain_groups[domain].append(example)
+
+        # Select best example from each unique domain first
+        selected = []
+        for domain, group in domain_groups.items():
+            if len(selected) >= capacity:
+                break
+            # Select highest quality example from this domain (already deduplicated)
+            best_from_domain = max(group, key=self._calculate_quality_score)
+            selected.append(best_from_domain)
+
+        # Fill remaining slots with highest quality examples from any domain
+        if len(selected) < capacity:
+            remaining_examples = [ex for ex in deduplicated_positives if ex not in selected]
+            remaining_examples.sort(key=self._calculate_quality_score, reverse=True)
+            selected.extend(remaining_examples[: capacity - len(selected)])
+
+        console.print(
+            f"[green]Selected {len(selected)} representative positive examples from {len(domain_groups)} unique domains[/green]"
+        )
+        return selected
+
+    def _validate_curated_dataset(self, examples: List[DatasetExample]) -> None:
+        """Validate curated dataset meets quality requirements.
+
+        Args:
+            examples: Curated examples to validate
+
+        Raises:
+            ValueError: If dataset fails validation
+        """
+        if not examples:
+            raise ValueError("Curated dataset is empty")
+
+        # Check URL uniqueness
+        urls = [self._get_website_url(ex) for ex in examples]
+        normalized_urls = [self._normalize_url(url) for url in urls]
+        if len(normalized_urls) != len(set(normalized_urls)):
+            raise ValueError("Curated dataset contains duplicate URLs")
+
+        # Check data completeness
+        for i, example in enumerate(examples):
+            if not self._get_website_url(example):
+                raise ValueError(f"Example {i} missing website_url")
+            if self._get_is_available(example) is None:
+                raise ValueError(f"Example {i} missing is_available field")
+
+        console.print(
+            f"[green]✓ Curated dataset validation passed: {len(examples)} examples[/green]"
+        )
+
+    def _print_curation_statistics(self, examples: List[DatasetExample]) -> None:
+        """Print detailed curation statistics.
+
+        Args:
+            examples: Curated examples to analyze
+        """
+        if not examples:
+            console.print("[yellow]No examples to analyze[/yellow]")
+            return
+
+        negative_count = len([ex for ex in examples if not self._get_is_available(ex)])
+        positive_count = len(examples) - negative_count
+
+        # Calculate domain diversity for positive examples
+        positive_examples = [ex for ex in examples if self._get_is_available(ex)]
+        domains = set()
+        for example in positive_examples:
+            domain = self._extract_domain(self._get_website_url(example))
+            domains.add(domain)
+
+        console.print("\n[bold blue]Dataset Curation Statistics[/bold blue]")
+        console.print(f"  Total Examples: {len(examples)}")
+        console.print(f"  Negative Examples (is_available: false): {negative_count}")
+        console.print(f"  Positive Examples (is_available: true): {positive_count}")
+        if positive_count > 0:
+            diversity_ratio = len(domains) / positive_count
+            console.print(f"  Unique Domains in Positive Examples: {len(domains)}")
+            console.print(f"  Domain Diversity Ratio: {diversity_ratio:.2f}")
+        console.print()
+
+    # Helper methods for curation
+    def _get_is_available(self, example: DatasetExample) -> Optional[bool]:
+        """Extract is_available value from example."""
+        return example.outputs.get("is_available")
+
+    def _get_website_url(self, example: DatasetExample) -> str:
+        """Extract website_url from example."""
+        return example.inputs.get("website_url", "")
+
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL for deduplication (remove www, trailing slashes, etc.)."""
+        if not url:
+            return ""
+
+        # Convert to lowercase and remove common prefixes/suffixes
+        normalized = url.lower().strip()
+
+        # Remove protocol
+        if normalized.startswith("https://"):
+            normalized = normalized[8:]
+        elif normalized.startswith("http://"):
+            normalized = normalized[7:]
+
+        # Remove www. prefix
+        if normalized.startswith("www."):
+            normalized = normalized[4:]
+
+        # Remove trailing slash
+        if normalized.endswith("/"):
+            normalized = normalized[:-1]
+
+        return normalized
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL for diversity analysis."""
+        from urllib.parse import urlparse
+
+        try:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+
+            # Check if parsing actually gave us a valid domain
+            if not domain or "." not in domain:
+                return "unknown"
+
+            # Remove port number
+            if ":" in domain:
+                domain = domain.split(":")[0]
+
+            # Remove www. prefix for grouping
+            if domain.startswith("www."):
+                domain = domain[4:]
+
+            return domain or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _prioritize_by_recency(self, examples: List[DatasetExample]) -> DatasetExample:
+        """Select most recent example from a group of duplicates."""
+        # For now, return first example (can be enhanced with timestamp logic)
+        return examples[0]
+
+    def _calculate_quality_score(self, example: DatasetExample) -> float:
+        """Calculate quality score for an example.
+
+        Higher scores indicate better quality examples.
+        """
+        score = 0.0
+
+        # Base score for having required fields
+        if self._get_website_url(example):
+            score += 1.0
+        if self._get_is_available(example) is not None:
+            score += 1.0
+
+        # Bonus for having notes or additional context
+        notes = example.outputs.get("notes", "")
+        if notes and len(notes.strip()) > 10:
+            score += 0.5
+
+        # Bonus for clear success/failure indicators in notes
+        if notes:
+            notes_lower = notes.lower()
+            if any(term in notes_lower for term in ["success", "completed", "found"]):
+                score += 0.3
+            if any(term in notes_lower for term in ["error", "failed", "timeout"]):
+                score += 0.2  # Still valuable as negative examples
+
+        return score
 
 
 class LangSmithUploader:
