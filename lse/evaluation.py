@@ -705,23 +705,30 @@ class DatasetBuilder:
             Dataset example or None if trace cannot be processed
         """
         try:
-            # Aggregate inputs, outputs, and reference from all runs
-            all_inputs = {}
-            all_outputs = {}
-            all_reference = {}
+            # Use root run priority extraction for availability eval_type
+            if eval_type == "availability":
+                root_run, child_runs = self._identify_trace_hierarchy(run_data_list)
+                all_inputs, all_outputs, all_reference = self._extract_with_priority(
+                    root_run, child_runs, eval_type
+                )
+            else:
+                # Use existing logic for other eval_types (token_name, website)
+                all_inputs = {}
+                all_outputs = {}
+                all_reference = {}
 
-            for run_data in run_data_list:
-                # Extract inputs (typically from root run only)
-                run_inputs = self._extract_inputs(run_data)
-                self._deep_merge_dict(all_inputs, run_inputs)
+                for run_data in run_data_list:
+                    # Extract inputs (typically from root run only)
+                    run_inputs = self._extract_inputs(run_data)
+                    self._deep_merge_dict(all_inputs, run_inputs)
 
-                # Extract outputs (from all runs, but prioritize final outputs)
-                run_outputs = self._extract_outputs(run_data)
-                self._deep_merge_dict(all_outputs, run_outputs)
+                    # Extract outputs (from all runs, but prioritize final outputs)
+                    run_outputs = self._extract_outputs(run_data)
+                    self._deep_merge_dict(all_outputs, run_outputs)
 
-                # Extract reference data (human feedback, verdicts)
-                run_reference = self._extract_reference(run_data)
-                self._deep_merge_dict(all_reference, run_reference)
+                    # Extract reference data (human feedback, verdicts)
+                    run_reference = self._extract_reference(run_data)
+                    self._deep_merge_dict(all_reference, run_reference)
 
             # Apply format-specific transformations if needed
             if eval_type:
@@ -1002,7 +1009,12 @@ class DatasetBuilder:
     def _extract_availability_notes(
         self, outputs: dict, website_analysis: dict, trace_outputs: dict
     ):
-        """Extract availability notes/error messages for availability evaluation."""
+        """Extract availability notes/error messages for availability evaluation.
+
+        Note: As of Phase 15, this method operates on root-run-prioritized data,
+        ensuring that availability status and notes reflect the authoritative
+        root run assessment rather than being contaminated by incomplete child runs.
+        """
         notes = ""
 
         # Check for availability notes in website_analysis
@@ -1027,14 +1039,14 @@ class DatasetBuilder:
         # Generate descriptive notes based on available data and inferred availability
         if not notes:
             is_available = outputs.get("is_available", False)
-            
+
             # Try to infer availability from the presence of scraped data or analysis results
             has_project_info = bool(trace_outputs.get("project_info"))
             has_social_links = bool(trace_outputs.get("social_links"))
             has_page_links = bool(trace_outputs.get("page_links"))
             has_website_analysis = bool(trace_outputs.get("website_analysis"))
             has_name_analysis = bool(trace_outputs.get("name_analysis"))
-            
+
             # Check if this appears to be a successful scraping/analysis result
             if has_project_info or has_social_links or has_page_links:
                 notes = "Website accessible - content successfully scraped"
@@ -1226,6 +1238,121 @@ class DatasetBuilder:
                 self._deep_merge_dict(target[key], value)
             else:
                 target[key] = value
+
+    def _identify_trace_hierarchy(
+        self, run_data_list: List[dict]
+    ) -> tuple[Optional[dict], List[dict]]:
+        """Separate root run from child runs in trace processing.
+
+        Args:
+            run_data_list: List of run data from database
+
+        Returns:
+            Tuple of (root_run, child_runs_list)
+        """
+        root_run = None
+        child_runs = []
+
+        for run_data in run_data_list:
+            if run_data.get("trace_id") == run_data.get("run_id"):
+                if root_run is not None:
+                    console.print(
+                        f"[yellow]Warning: Multiple root runs found in trace {run_data.get('trace_id')}[/yellow]"
+                    )
+                root_run = run_data
+            else:
+                child_runs.append(run_data)
+
+        if root_run is None and run_data_list:
+            # Debug level - common case where traces don't have root runs
+            # Using fallback logic (child runs) is normal and working correctly
+            pass  # Removed noisy warning - fallback behavior is functioning as intended
+
+        return root_run, child_runs
+
+    def _get_critical_fields(self, eval_type: str) -> Dict[str, List[str]]:
+        """Define fields that must maintain root run priority.
+
+        Args:
+            eval_type: Evaluation type (availability, token_name, website)
+
+        Returns:
+            Dictionary mapping field categories to protected field names
+        """
+        if eval_type == "availability":
+            return {
+                "inputs": [],  # No critical input fields for availability
+                "outputs": ["is_available", "notes"],  # These must come from root run
+                "reference": [],
+            }
+        else:
+            # Other eval types use existing logic (no protection)
+            return {"inputs": [], "outputs": [], "reference": []}
+
+    def _merge_with_protection(
+        self, primary_data: dict, supplement_data: dict, protected_fields: List[str]
+    ) -> None:
+        """Merge supplement data into primary without overriding protected fields.
+
+        Args:
+            primary_data: Primary data dictionary (will be modified)
+            supplement_data: Supplement data to merge in
+            protected_fields: List of field names that cannot be overridden
+        """
+        for key, value in supplement_data.items():
+            if key in protected_fields and key in primary_data:
+                # Skip: Root run data takes priority for protected fields
+                continue
+            elif key not in primary_data:
+                # Allow: Fill missing fields from child runs
+                primary_data[key] = value
+            elif key not in protected_fields:
+                # Override non-protected existing fields
+                if isinstance(value, dict) and isinstance(primary_data.get(key), dict):
+                    # Recurse: Deep merge for nested structures (no protection at nested levels)
+                    self._deep_merge_dict(primary_data[key], value)
+                else:
+                    # Override with supplement data
+                    primary_data[key] = value
+
+    def _extract_with_priority(
+        self, root_run: Optional[dict], child_runs: List[dict], eval_type: str
+    ) -> tuple[dict, dict, dict]:
+        """Extract data with root run priority for critical fields.
+
+        Args:
+            root_run: Root run data (trace_id == run_id)
+            child_runs: List of child run data
+            eval_type: Evaluation type for priority rules
+
+        Returns:
+            Tuple of (inputs, outputs, reference) dictionaries
+        """
+        # Phase 1: Extract from root run (authoritative)
+        primary_inputs = self._extract_inputs(root_run) if root_run else {}
+        primary_outputs = self._extract_outputs(root_run) if root_run else {}
+        primary_reference = self._extract_reference(root_run) if root_run else {}
+
+        # Phase 2: Supplement with child run data (gap filling only)
+        critical_fields = self._get_critical_fields(eval_type)
+
+        for child_run in child_runs:
+            child_inputs = self._extract_inputs(child_run)
+            child_outputs = self._extract_outputs(child_run)
+            child_reference = self._extract_reference(child_run)
+
+            # Merge with protection for critical fields
+            self._merge_with_protection(
+                primary_inputs, child_inputs, critical_fields.get("inputs", [])
+            )
+            self._merge_with_protection(
+                primary_outputs, child_outputs, critical_fields.get("outputs", [])
+            )
+            self._merge_with_protection(
+                primary_reference, child_reference, critical_fields.get("reference", [])
+            )
+
+        return primary_inputs, primary_outputs, primary_reference
 
 
 class LangSmithUploader:

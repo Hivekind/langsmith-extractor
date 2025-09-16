@@ -458,3 +458,343 @@ class TestAvailabilityFormatting:
         assert formatted_inputs == {"website_url": "https://test.com"}
         assert formatted_outputs == {"is_available": False, "notes": "DNS resolution failed"}
         assert formatted_reference == reference
+
+
+class TestRootRunPriority:
+    """Tests for Phase 15 root run priority logic."""
+
+    def test_identify_trace_hierarchy_normal_case(self):
+        """Test normal case: one root run + multiple child runs."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "test-trace-123",  # Root run
+                "outputs": {"website_analysis": {"is_available": True}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-run-456",  # Child run
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-run-789",  # Child run
+                "outputs": {"website_analysis": {"is_available": None}},
+            },
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is not None
+        assert root_run["run_id"] == "test-trace-123"
+        assert len(child_runs) == 2
+        assert all(run["run_id"] != "test-trace-123" for run in child_runs)
+
+    def test_identify_trace_hierarchy_no_root_run(self):
+        """Test edge case: no root run (all child runs)."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-run-456",  # Child run
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-run-789",  # Child run
+                "outputs": {"website_analysis": {"is_available": None}},
+            },
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is None
+        assert len(child_runs) == 2
+
+    def test_identify_trace_hierarchy_single_run(self):
+        """Test edge case: single run trace (root run only)."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "test-trace-123",  # Root run
+                "outputs": {"website_analysis": {"is_available": True}},
+            }
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is not None
+        assert root_run["run_id"] == "test-trace-123"
+        assert len(child_runs) == 0
+
+    def test_get_critical_fields_availability(self):
+        """Test critical fields definition for availability eval_type."""
+        builder = DatasetBuilder()
+
+        critical_fields = builder._get_critical_fields("availability")
+
+        assert critical_fields == {
+            "inputs": [],
+            "outputs": ["is_available", "notes"],
+            "reference": [],
+        }
+
+    def test_get_critical_fields_other_eval_types(self):
+        """Test critical fields for non-availability eval_types."""
+        builder = DatasetBuilder()
+
+        for eval_type in ["token_name", "website", "other"]:
+            critical_fields = builder._get_critical_fields(eval_type)
+            assert critical_fields == {"inputs": [], "outputs": [], "reference": []}
+
+    def test_merge_with_protection_protected_fields(self):
+        """Test that protected fields are never overwritten."""
+        builder = DatasetBuilder()
+
+        primary_data = {
+            "is_available": True,  # Protected field
+            "notes": "Root run notes",  # Protected field
+            "other_field": "root value",
+        }
+
+        supplement_data = {
+            "is_available": False,  # Should NOT override
+            "notes": "Child run notes",  # Should NOT override
+            "other_field": "child value",  # Should override
+            "missing_field": "child added",  # Should be added
+        }
+
+        protected_fields = ["is_available", "notes"]
+
+        builder._merge_with_protection(primary_data, supplement_data, protected_fields)
+
+        # Protected fields should maintain root run values
+        assert primary_data["is_available"] is True
+        assert primary_data["notes"] == "Root run notes"
+
+        # Non-protected fields should be overridden
+        assert primary_data["other_field"] == "child value"
+
+        # Missing fields should be added
+        assert primary_data["missing_field"] == "child added"
+
+    def test_merge_with_protection_missing_fields_only(self):
+        """Test child run data supplements missing fields only."""
+        builder = DatasetBuilder()
+
+        primary_data = {"is_available": True, "notes": "Root run notes"}
+
+        supplement_data = {
+            "is_available": False,  # Should NOT override
+            "additional_info": "child data",  # Should be added
+        }
+
+        protected_fields = ["is_available"]
+
+        builder._merge_with_protection(primary_data, supplement_data, protected_fields)
+
+        assert primary_data["is_available"] is True  # Protected
+        assert primary_data["notes"] == "Root run notes"  # Unchanged
+        assert primary_data["additional_info"] == "child data"  # Added
+
+    def test_extract_with_priority_root_run_authority(self):
+        """Test that root run data takes absolute priority for critical fields."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods
+        def mock_extract_inputs(run_data):
+            if not run_data:
+                return {}
+            return {"website_url": run_data.get("inputs", {}).get("website_url", "")}
+
+        def mock_extract_outputs(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("outputs", {})
+
+        def mock_extract_reference(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("reference", {})
+
+        builder._extract_inputs = mock_extract_inputs
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = mock_extract_reference
+
+        root_run = {
+            "trace_id": "test-trace-123",
+            "run_id": "test-trace-123",
+            "inputs": {"website_url": "https://test.com"},
+            "outputs": {"is_available": True, "notes": "Root run analysis"},
+            "reference": {},
+        }
+
+        child_runs = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-456",
+                "outputs": {
+                    "is_available": False,
+                    "notes": "Child run analysis",
+                    "extra_data": "child info",
+                },
+                "reference": {},
+            }
+        ]
+
+        inputs, outputs, reference = builder._extract_with_priority(
+            root_run, child_runs, "availability"
+        )
+
+        # Critical fields should come from root run
+        assert outputs["is_available"] is True  # Root run value
+        assert outputs["notes"] == "Root run analysis"  # Root run value
+
+        # Non-critical fields should be supplemented
+        assert outputs["extra_data"] == "child info"  # Added from child run
+
+    def test_extract_with_priority_no_root_run(self):
+        """Test fallback behavior when no root run exists."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods
+        def mock_extract_outputs(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("outputs", {})
+
+        builder._extract_inputs = lambda x: {} if not x else x.get("inputs", {})
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = lambda x: {} if not x else x.get("reference", {})
+
+        child_runs = [
+            {
+                "outputs": {"is_available": False, "notes": "Child run analysis"},
+            }
+        ]
+
+        inputs, outputs, reference = builder._extract_with_priority(
+            None, child_runs, "availability"
+        )
+
+        # Should get data from child runs since no root run
+        assert outputs["is_available"] is False
+        assert outputs["notes"] == "Child run analysis"
+
+    def test_build_example_from_runs_availability_uses_priority(self):
+        """Test that availability eval_type uses root run priority extraction."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods and hierarchy identification
+        def mock_identify_hierarchy(run_data_list):
+            root_run = None
+            child_runs = []
+            for run_data in run_data_list:
+                if run_data.get("trace_id") == run_data.get("run_id"):
+                    root_run = run_data
+                else:
+                    child_runs.append(run_data)
+            return root_run, child_runs
+
+        def mock_extract_with_priority(root_run, child_runs, eval_type):
+            if eval_type == "availability":
+                return (
+                    {"website_url": "https://test.com"},
+                    {"is_available": True, "notes": "Root run priority working"},
+                    {},
+                )
+            return {}, {}, {}
+
+        def mock_apply_format(inputs, outputs, reference, eval_type):
+            if eval_type == "availability":
+                return (
+                    {"website_url": inputs.get("website_url", "")},
+                    {
+                        "is_available": outputs.get("is_available", False),
+                        "notes": outputs.get("notes", ""),
+                    },
+                    reference,
+                )
+            return inputs, outputs, reference
+
+        builder._identify_trace_hierarchy = mock_identify_hierarchy
+        builder._extract_with_priority = mock_extract_with_priority
+        builder._apply_format = mock_apply_format
+
+        trace_metadata = TraceMetadata(
+            trace_id="test-trace-123", project="test-project", date="2025-01-01"
+        )
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "test-trace-123",
+                "outputs": {"website_analysis": {"is_available": True}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-456",
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+        ]
+
+        example = builder._build_example_from_runs(trace_metadata, run_data_list, "availability")
+
+        assert example is not None
+        assert example.inputs["website_url"] == "https://test.com"
+        assert example.outputs["is_available"] is True
+        assert example.outputs["notes"] == "Root run priority working"
+
+    def test_build_example_from_runs_other_eval_types_unchanged(self):
+        """Test that non-availability eval_types use existing logic."""
+        builder = DatasetBuilder()
+
+        # Mock existing methods to verify they're called for non-availability types
+        calls_made = []
+
+        def mock_extract_inputs(run_data):
+            calls_made.append(("extract_inputs", run_data.get("run_id")))
+            return {"token_name": "TEST"}
+
+        def mock_extract_outputs(run_data):
+            calls_made.append(("extract_outputs", run_data.get("run_id")))
+            return {"result": "existing_logic"}
+
+        def mock_extract_reference(run_data):
+            calls_made.append(("extract_reference", run_data.get("run_id")))
+            return {}
+
+        def mock_deep_merge_dict(target, source):
+            target.update(source)
+
+        def mock_apply_format(inputs, outputs, reference, eval_type):
+            return inputs, outputs, reference
+
+        builder._extract_inputs = mock_extract_inputs
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = mock_extract_reference
+        builder._deep_merge_dict = mock_deep_merge_dict
+        builder._apply_format = mock_apply_format
+
+        trace_metadata = TraceMetadata(
+            trace_id="test-trace-123", project="test-project", date="2025-01-01"
+        )
+
+        run_data_list = [
+            {"trace_id": "test-trace-123", "run_id": "run-1"},
+            {"trace_id": "test-trace-123", "run_id": "run-2"},
+        ]
+
+        builder._build_example_from_runs(trace_metadata, run_data_list, "token_name")
+
+        # Verify existing extraction methods were called for each run
+        assert len(calls_made) == 6  # 3 methods × 2 runs
+        assert ("extract_inputs", "run-1") in calls_made
+        assert ("extract_inputs", "run-2") in calls_made
+        assert ("extract_outputs", "run-1") in calls_made
+        assert ("extract_outputs", "run-2") in calls_made
