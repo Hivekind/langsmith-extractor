@@ -934,6 +934,123 @@ lse archive full-sweep --project my-project --date 2025-09-06
 3. **Business Impact**: Generated datasets cannot be used for evaluation workflows as they don't match expected format
 4. **Test Coverage Gap**: No tests validating output format compliance
 
+## Phase 14: Availability Evaluation Type 🔄 **PLANNED**
+
+**Goal:** Add support for "availability" evaluation type to create datasets for URL availability checking  
+**Success Criteria:** `lse eval create-dataset --eval-type availability` creates properly formatted datasets with website_url inputs and is_available outputs
+
+### Problem Statement
+Need to expand evaluation capabilities to support URL availability checking:
+
+1. **New Evaluation Type**: Add "availability" as a supported eval_type alongside existing "token_name" and "website" types
+2. **Simplified Dataset Creation**: Create entries for every trace over the date range (not just "high confidence" traces like token_name and website)
+3. **URL Focus**: Extract website_url from trace inputs and availability status from outputs
+4. **Business Value**: Enable automated evaluation of website availability across due diligence workflows
+
+### Features
+
+- [ ] **Availability eval_type support** - Add "availability" to supported eval_type options `M`
+- [ ] **All-trace inclusion logic** - Create entries for every trace (no high-confidence filtering) `M`
+- [ ] **URL extraction** - Extract website_url from /due-diligence API request parameters `M`
+- [ ] **Availability output format** - Format outputs with is_available boolean and notes field `M`
+- [ ] **Command interface integration** - Seamless integration with existing eval create-dataset command `S`
+- [ ] **Validation and testing** - Comprehensive test coverage for new eval_type `S`
+- [ ] **Documentation updates** - Update help text and examples `S`
+
+### Expected Dataset Format
+
+**Availability Evaluation Examples**:
+```json
+{
+  "examples": [
+    {
+      "inputs": {
+        "website_url": "https://ethereum.org"
+      },
+      "outputs": {
+        "is_available": true,
+        "notes": "Official Ethereum website - should always be accessible"
+      }
+    },
+    {
+      "inputs": {
+        "website_url": "https://nonexistent-crypto-site-xyz123.com"
+      },
+      "outputs": {
+        "is_available": false,
+        "notes": "Non-existent domain - should fail DNS resolution"
+      }
+    }
+  ]
+}
+```
+
+### Command Interface (Enhanced)
+
+```bash
+# Create availability evaluation dataset
+lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability
+
+# Date range support for availability
+lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type availability
+
+# Upload and run availability evaluation
+lse eval upload --dataset availability_dataset.json --name availability_eval_2025_01
+lse eval run --dataset-name availability_eval_2025_01 --experiment-prefix avail_check --eval-type availability
+```
+
+### Technical Implementation
+
+#### Data Extraction Logic
+- **Input Extraction**: Extract `website_url` parameter from `/due-diligence` API request data
+- **Output Extraction**: Determine availability status from API response or error patterns
+- **No High-Confidence Filtering**: Include all traces that contain website_url, regardless of confidence scores
+- **Notes Generation**: Provide descriptive notes about availability status or failure reasons
+
+#### Integration Points
+- **Existing eval_type validation**: Update to include "availability" as valid option
+- **Format method**: Add `_format_availability()` method alongside existing format methods
+- **Database queries**: Reuse existing trace extraction with availability-specific filtering
+- **Command help**: Update CLI help text to include availability in examples
+
+### Quality Gates
+
+#### Phase 14.1 Completion Criteria
+- [ ] "availability" eval_type accepted by CLI validation
+- [ ] All traces with website_url parameter included in dataset creation
+- [ ] Basic availability status extraction working
+- [ ] Format validation tests pass for availability datasets
+
+#### Phase 14.2 Completion Criteria
+- [ ] Complete availability dataset format matches specification exactly
+- [ ] Notes field provides meaningful availability context
+- [ ] Integration with existing upload and run commands working
+- [ ] Test coverage exceeds 95% for availability-specific code
+
+#### Phase 14.3 Completion Criteria
+- [ ] Documentation updated with availability examples
+- [ ] Help text includes availability in eval_type options
+- [ ] End-to-end workflow validated from dataset creation to external API
+- [ ] Performance maintains current standards
+
+### Dependencies
+- Phase 10 (Evaluation Database Migration) completed ✅
+- Phase 13 (Dataset Format Fix) completion recommended for consistency
+- Database populated with traces containing website_url parameters
+- External evaluation API supports availability eval_type
+
+### Risk Assessment
+
+#### Technical Risks
+- **Data Structure Variance**: website_url may be nested differently across trace types
+- **Availability Detection**: Complex logic needed to determine availability from various response patterns
+- **Performance Impact**: Processing all traces (no filtering) may increase dataset creation time
+
+#### Mitigation Strategies
+- **Flexible Extraction**: Implement robust website_url extraction from multiple potential locations
+- **Pattern Recognition**: Define clear availability detection rules based on response codes and error patterns
+- **Batching**: Use existing database batching for efficient processing of larger trace volumes
+
 ### Current vs Expected Format Analysis
 
 #### Current (Incorrect) Format
