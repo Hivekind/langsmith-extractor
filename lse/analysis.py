@@ -6,6 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 
+from sqlalchemy import text
+
+from lse.database import DatabaseManager
 from lse.exceptions import ValidationError
 
 logger = logging.getLogger("lse.analysis")
@@ -254,7 +257,7 @@ class TraceAnalyzer:
         )
 
         if not trace_files:
-            self.logger.warning("No trace files found for analysis")
+            self.logger.warning("No run files found for analysis")
             return {}
 
         # Parse all trace files
@@ -623,3 +626,201 @@ def build_zenrows_detail_hierarchy(
                 hierarchy[crypto][root_id].append(error)
 
     return hierarchy
+
+
+class DatabaseTraceAnalyzer:
+    """Database-based trace analyzer for generating reports from database runs."""
+
+    def __init__(self, database_manager: DatabaseManager):
+        """Initialize database analyzer.
+
+        Args:
+            database_manager: Database manager for async operations
+        """
+        self.db = database_manager
+        self.logger = logging.getLogger("lse.analysis.db")
+
+    async def analyze_zenrows_errors_from_db(
+        self,
+        project_name: Optional[str] = None,
+        report_date: datetime = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Analyze zenrows errors from database by aggregating runs into traces.
+
+        Args:
+            project_name: Project to analyze (None for all projects)
+            report_date: Date to analyze (required)
+
+        Returns:
+            Dictionary with date keys and analysis results
+        """
+        if not report_date:
+            raise ValidationError("Date parameter is required")
+
+        # Convert datetime to date for database query
+        query_date = report_date.date() if hasattr(report_date, "date") else report_date
+
+        async with self.db.get_session() as session:
+            # Query runs for the specified date and project
+            if project_name:
+                result = await session.execute(
+                    text("""
+                    SELECT 
+                        trace_id,
+                        array_agg(data ORDER BY created_at) as run_data_array,
+                        COUNT(*) as run_count
+                    FROM runs 
+                    WHERE project = :project 
+                      AND run_date = :date
+                      AND trace_id IS NOT NULL
+                    GROUP BY trace_id
+                    ORDER BY trace_id
+                    """),
+                    {"project": project_name, "date": query_date},
+                )
+            else:
+                result = await session.execute(
+                    text("""
+                    SELECT 
+                        trace_id,
+                        array_agg(data ORDER BY created_at) as run_data_array,
+                        COUNT(*) as run_count
+                    FROM runs 
+                    WHERE run_date = :date
+                      AND trace_id IS NOT NULL
+                    GROUP BY trace_id
+                    ORDER BY trace_id
+                    """),
+                    {"date": query_date},
+                )
+
+            # Process traces and extract zenrows errors
+            total_traces = 0
+            total_errors = 0
+
+            for row in result.fetchall():
+                run_data_array = row[1]
+
+                total_traces += 1
+
+                # Reconstruct trace by merging runs
+                trace_data = self._reconstruct_trace_from_runs(run_data_array)
+
+                # Extract zenrows errors from this trace
+                errors = extract_zenrows_errors(trace_data)
+                total_errors += len(errors)
+
+            # Calculate error rate
+            error_rate = round((total_errors / total_traces) * 100, 1) if total_traces > 0 else 0.0
+
+            # Return in format compatible with existing formatter
+            date_str = query_date.strftime("%Y-%m-%d")
+            return {
+                date_str: {
+                    "total_traces": total_traces,
+                    "zenrows_errors": total_errors,
+                    "error_rate": error_rate,
+                }
+            }
+
+    async def generate_zenrows_detail_from_db(
+        self,
+        project_name: Optional[str] = None,
+        report_date: datetime = None,
+    ) -> Dict[str, Any]:
+        """Generate detailed zenrows error hierarchy from database.
+
+        Args:
+            project_name: Project to analyze (None for all projects)
+            report_date: Date to analyze (required)
+
+        Returns:
+            Hierarchical error data structure
+        """
+        if not report_date:
+            raise ValidationError("Date parameter is required")
+
+        # Convert datetime to date for database query
+        query_date = report_date.date() if hasattr(report_date, "date") else report_date
+
+        async with self.db.get_session() as session:
+            # Query runs for the specified date and project
+            if project_name:
+                result = await session.execute(
+                    text("""
+                    SELECT 
+                        trace_id,
+                        array_agg(data ORDER BY created_at) as run_data_array,
+                        COUNT(*) as run_count
+                    FROM runs 
+                    WHERE project = :project 
+                      AND run_date = :date
+                      AND trace_id IS NOT NULL
+                    GROUP BY trace_id
+                    ORDER BY trace_id
+                    """),
+                    {"project": project_name, "date": query_date},
+                )
+            else:
+                result = await session.execute(
+                    text("""
+                    SELECT 
+                        trace_id,
+                        array_agg(data ORDER BY created_at) as run_data_array,
+                        COUNT(*) as run_count
+                    FROM runs 
+                    WHERE run_date = :date
+                      AND trace_id IS NOT NULL
+                    GROUP BY trace_id
+                    ORDER BY trace_id
+                    """),
+                    {"date": query_date},
+                )
+
+            # Collect all traces for hierarchy building
+            all_traces = []
+
+            for row in result.fetchall():
+                run_data_array = row[1]
+
+                # Reconstruct trace by merging runs
+                trace_data = self._reconstruct_trace_from_runs(run_data_array)
+                all_traces.append(trace_data)
+
+            # Build hierarchy using existing function
+            return build_zenrows_detail_hierarchy(all_traces)
+
+    def _reconstruct_trace_from_runs(self, run_data_array: List[dict]) -> Dict[str, Any]:
+        """Reconstruct a complete trace from array of run data.
+
+        Args:
+            run_data_array: List of run data JSONB objects
+
+        Returns:
+            Complete trace data structure
+        """
+        if not run_data_array:
+            return {}
+
+        # Start with the root run (typically the first one)
+        root_run = run_data_array[0].copy()
+
+        # If there are multiple runs, we need to aggregate them
+        if len(run_data_array) > 1:
+            # Find the actual root run (where run_id == trace_id)
+            trace_id = root_run.get("trace_id")
+            for run_data in run_data_array:
+                if run_data.get("id") == trace_id:
+                    root_run = run_data.copy()
+                    break
+
+            # Add all runs as child_runs for the hierarchical analysis
+            child_runs = []
+            for run_data in run_data_array:
+                if run_data.get("id") != root_run.get("id"):
+                    child_runs.append(run_data)
+
+            if child_runs:
+                root_run["child_runs"] = child_runs
+
+        return root_run

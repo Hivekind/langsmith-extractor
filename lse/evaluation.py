@@ -2,14 +2,17 @@
 
 import json
 import hashlib
+from datetime import date
 from typing import Any, Dict, List, Optional
 
 import httpx
 from langsmith import Client
 from pydantic import BaseModel, Field
 from rich.console import Console
+from sqlalchemy import text
 
 from lse.config import get_settings
+from lse.database import DatabaseManager
 from lse.storage import TraceStorage
 
 console = Console()
@@ -47,15 +50,19 @@ class EvaluationDataset(BaseModel):
 
 
 class TraceExtractor:
-    """Extract suitable traces for evaluation from local storage."""
+    """Extract suitable traces for evaluation from local storage or database."""
 
-    def __init__(self, storage: Optional[TraceStorage] = None):
+    def __init__(
+        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+    ):
         """Initialize the trace extractor.
 
         Args:
-          storage: TraceStorage instance for accessing stored traces
+          storage: TraceStorage instance for accessing stored traces (file-based)
+          database: DatabaseManager instance for accessing database (database-based)
         """
         self.storage = storage or TraceStorage(get_settings())
+        self.database = database
 
     def extract_traces(self, project: str, date: str) -> List[TraceMetadata]:
         """Extract traces that meet filtering criteria from stored run data.
@@ -180,24 +187,132 @@ class TraceExtractor:
 
         return traces
 
+    async def extract_traces_from_db(
+        self,
+        project: str,
+        start_date: str,
+        end_date: Optional[str] = None,
+        eval_type: Optional[str] = None,
+    ) -> List[TraceMetadata]:
+        """Extract traces from database that meet evaluation criteria.
+
+        This method queries runs and aggregates them by trace_id to reconstruct traces.
+
+        Args:
+            project: Project name to extract traces from
+            start_date: Start date in YYYY-MM-DD format (UTC)
+            end_date: End date in YYYY-MM-DD format (UTC), defaults to start_date
+
+        Returns:
+            List of trace metadata meeting evaluation criteria
+        """
+        if not self.database:
+            raise ValueError("DatabaseManager is required for database-based extraction")
+
+        end_date = end_date or start_date
+
+        # Convert string dates to date objects for PostgreSQL compatibility
+        start_date_obj = date.fromisoformat(start_date)
+        end_date_obj = date.fromisoformat(end_date)
+
+        async with self.database.get_session() as session:
+            # Query all runs for the date range, grouped by trace_id
+            result = await session.execute(
+                text("""
+                SELECT 
+                    trace_id, 
+                    project, 
+                    run_date,
+                    array_agg(data ORDER BY created_at) as run_data_array,
+                    COUNT(*) as run_count
+                FROM runs 
+                WHERE project = :project 
+                  AND run_date BETWEEN :start_date AND :end_date
+                  AND trace_id IS NOT NULL
+                GROUP BY trace_id, project, run_date
+                HAVING COUNT(*) >= 1
+                ORDER BY run_date, trace_id
+                """),
+                {"project": project, "start_date": start_date_obj, "end_date": end_date_obj},
+            )
+
+            traces = []
+            for row in result.fetchall():
+                # Aggregate run data to evaluate trace-level criteria
+                trace_evaluation = self._evaluate_trace_from_runs(
+                    row[3], eval_type
+                )  # run_data_array
+
+                if trace_evaluation["meets_criteria"]:
+                    trace_metadata = TraceMetadata(
+                        trace_id=row[0],  # trace_id
+                        project=row[1],  # project
+                        date=row[2].strftime("%Y-%m-%d"),  # run_date
+                        has_ai_output=trace_evaluation["has_ai_output"],
+                        has_human_feedback=trace_evaluation["has_human_feedback"],
+                    )
+                    traces.append(trace_metadata)
+
+            return traces
+
+    def _evaluate_trace_from_runs(
+        self, run_data_array: List[dict], eval_type: Optional[str] = None
+    ) -> dict:
+        """Evaluate a trace based on aggregated run data.
+
+        Args:
+            run_data_array: List of run data JSONB objects belonging to same trace
+
+        Returns:
+            Dict with evaluation results for the trace
+        """
+        has_ai_output = False
+        has_human_feedback = False
+        meets_criteria = False
+
+        # Aggregate evaluation criteria across all runs in the trace
+        for run_data in run_data_array:
+            if self._has_ai_output(run_data):
+                has_ai_output = True
+
+            if self._has_human_feedback(run_data):
+                has_human_feedback = True
+
+            # Check if any run in this trace meets filtering criteria
+            if self._meets_filtering_criteria(run_data, eval_type):
+                meets_criteria = True
+
+        return {
+            "has_ai_output": has_ai_output,
+            "has_human_feedback": has_human_feedback,
+            "meets_criteria": meets_criteria,
+        }
+
     def _has_ai_output(self, trace_data: Dict[str, Any]) -> bool:
         """Check if trace contains AI output.
 
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace contains AI output
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check outputs field at trace level (primary location)
-        trace = trace_data.get("trace", {})
         outputs = trace.get("outputs", {})
         if outputs and isinstance(outputs, dict) and outputs:
             return True
 
         # Check outputs field at root level (backup)
         outputs = trace_data.get("outputs", {})
-        if outputs:
+        if outputs and isinstance(outputs, dict):
             # Look for common AI output fields
             ai_fields = ["ai_recommendation", "response", "output", "completion"]
             for field in ai_fields:
@@ -207,7 +322,7 @@ class TraceExtractor:
         # Check for outputs in run tree
         if "run" in trace_data:
             run_outputs = trace_data["run"].get("outputs", {})
-            if run_outputs:
+            if run_outputs and isinstance(run_outputs, dict):
                 return True
 
         return False
@@ -216,13 +331,20 @@ class TraceExtractor:
         """Check if trace contains human feedback.
 
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace contains human feedback
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check for feedback_stats.final_verdict (primary location for human feedback)
-        trace = trace_data.get("trace", {})
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             return True
@@ -233,10 +355,12 @@ class TraceExtractor:
             return True
 
         # Check for feedback in specific fields
-        if "human_verdict" in trace_data.get("outputs", {}):
+        outputs = trace_data.get("outputs", {})
+        if outputs and isinstance(outputs, dict) and "human_verdict" in outputs:
             return True
 
-        if "human_feedback" in trace_data.get("reference", {}):
+        reference = trace_data.get("reference", {})
+        if reference and isinstance(reference, dict) and "human_feedback" in reference:
             return True
 
         return False
@@ -244,19 +368,29 @@ class TraceExtractor:
     def _has_final_verdict_feedback(self, trace_data: Dict[str, Any]) -> bool:
         """Check if trace has final verdict feedback.
 
+        Database format: trace_data["feedback_stats"]["final_verdict"]["comments"][0]
+        File format: trace_data["trace"]["feedback_stats"]["final_verdict"]
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           True if trace has final verdict feedback
         """
-        # Check for feedback_stats.final_verdict (primary location)
-        trace = trace_data.get("trace", {})
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
+        # Check for feedback_stats.final_verdict (both database and file format)
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             final_verdict = feedback_stats.get("final_verdict")
             if final_verdict:
-                # Check for comments containing "Human verdict:"
+                # Check for comments containing "Human verdict:" (primary method)
                 comments = final_verdict.get("comments", [])
                 if comments and any("Human verdict:" in str(comment) for comment in comments):
                     return True
@@ -264,7 +398,7 @@ class TraceExtractor:
                 if "verdict" in final_verdict:
                     return True
 
-        # Check for feedback with final_verdict
+        # Check for feedback with final_verdict (fallback)
         feedback = trace_data.get("feedback", [])
         if isinstance(feedback, list):
             for fb in feedback:
@@ -278,19 +412,30 @@ class TraceExtractor:
     def _get_feedback_verdict(self, trace_data: Dict[str, Any]) -> Optional[str]:
         """Extract the verdict from feedback.
 
+        Database format: trace_data["feedback_stats"]["final_verdict"]["comments"][0]
+        File format: trace_data["trace"]["feedback_stats"]["final_verdict"]["comments"][0]
+        Expected format: "Human verdict: {FINAL_VERDICT}"
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           Feedback verdict string (PASS/FAIL) or None if not found
         """
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
         # Check for feedback_stats.final_verdict (primary location)
-        trace = trace_data.get("trace", {})
         feedback_stats = trace.get("feedback_stats", {})
         if feedback_stats and "final_verdict" in feedback_stats:
             final_verdict = feedback_stats.get("final_verdict")
             if final_verdict:
-                # Check for comments containing "Human verdict:"
+                # Check for comments containing "Human verdict:" (primary method)
                 comments = final_verdict.get("comments", [])
                 if comments:
                     for comment in comments:
@@ -304,7 +449,7 @@ class TraceExtractor:
                 if "verdict" in final_verdict:
                     return final_verdict.get("verdict")
 
-        # Check for feedback with final_verdict
+        # Check for feedback with final_verdict (fallback)
         feedback = trace_data.get("feedback", [])
         if isinstance(feedback, list):
             for fb in feedback:
@@ -320,14 +465,29 @@ class TraceExtractor:
     ) -> tuple[Optional[str], Optional[float]]:
         """Extract final_decision and confidence from outputs.
 
+        Database format: trace_data["outputs"]["final_decision"]
+        File format: trace_data["trace"]["outputs"]["final_decision"]
+
         Args:
-          trace_data: Raw trace data
+          trace_data: Raw trace data (either database format or file format)
 
         Returns:
           Tuple of (final_decision, confidence) or (None, None) if not found
         """
-        trace = trace_data.get("trace", {})
+        # Handle both database format (direct) and file format (wrapped in "trace" key)
+        if "trace" in trace_data:
+            # File format: {"metadata": ..., "trace": {...}}
+            trace = trace_data["trace"]
+        else:
+            # Database format: direct run data
+            trace = trace_data
+
+        # Check trace level outputs first (both database and file format)
         outputs = trace.get("outputs", {})
+
+        # Fallback to top-level outputs (alternative structure)
+        if not outputs:
+            outputs = trace_data.get("outputs", {})
 
         if not outputs or outputs is None:
             return None, None
@@ -344,16 +504,19 @@ class TraceExtractor:
 
         return final_decision, confidence
 
-    def _meets_filtering_criteria(self, run_data: Dict[str, Any]) -> bool:
+    def _meets_filtering_criteria(
+        self, run_data: Dict[str, Any], eval_type: Optional[str] = None
+    ) -> bool:
         """Check if a run meets all filtering criteria.
 
-        Current criteria:
+        Current criteria (strict for all eval types):
         1. Must have final verdict feedback
         2. Output final_decision must match feedback verdict (PASS-PASS or FAIL-FAIL)
         3. Confidence must be >= 0.7
 
         Args:
           run_data: Raw run data
+          eval_type: Evaluation type (currently unused, all types use same strict criteria)
 
         Returns:
           True if run meets ALL criteria
@@ -384,13 +547,17 @@ class TraceExtractor:
 class DatasetBuilder:
     """Build evaluation datasets from extracted traces."""
 
-    def __init__(self, storage: Optional[TraceStorage] = None):
+    def __init__(
+        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+    ):
         """Initialize the dataset builder.
 
         Args:
           storage: TraceStorage instance for accessing stored traces
+          database: DatabaseManager instance for accessing database
         """
         self.storage = storage or TraceStorage(get_settings())
+        self.database = database
 
     def build_dataset(
         self,
@@ -421,6 +588,122 @@ class DatasetBuilder:
                 dataset.examples.append(example)
 
         return dataset
+
+    async def create_dataset_from_db(
+        self,
+        project: str,
+        start_date: str,
+        end_date: str,
+        eval_type: str,
+    ) -> EvaluationDataset:
+        """Create evaluation dataset directly from database.
+
+        Args:
+            project: Project name
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+            eval_type: Evaluation type for formatting
+
+        Returns:
+            Complete evaluation dataset ready for upload
+        """
+        if not self.database:
+            raise ValueError("DatabaseManager is required for database-based dataset creation")
+
+        # Use the TraceExtractor to get suitable traces
+        extractor = TraceExtractor(database=self.database)
+        trace_metadata = await extractor.extract_traces_from_db(
+            project=project, start_date=start_date, end_date=end_date, eval_type=eval_type
+        )
+
+        # Build dataset examples
+        examples = []
+        async with self.database.get_session() as session:
+            for metadata in trace_metadata:
+                # Get all runs for this trace from database
+                result = await session.execute(
+                    text("""
+                    SELECT data FROM runs 
+                    WHERE trace_id = :trace_id 
+                      AND project = :project 
+                      AND run_date = :date
+                    ORDER BY created_at
+                    """),
+                    {
+                        "trace_id": metadata.trace_id,
+                        "project": metadata.project,
+                        "date": date.fromisoformat(metadata.date),
+                    },
+                )
+
+                run_data_list = [row.data for row in result.fetchall()]
+                if run_data_list:
+                    example = self._build_example_from_runs(
+                        trace_metadata=metadata, run_data_list=run_data_list, eval_type=eval_type
+                    )
+                    if example:
+                        examples.append(example)
+
+        # Create dataset
+        dataset_name = f"{project}_{eval_type}_{start_date}_{end_date}"
+        return EvaluationDataset(
+            name=dataset_name,
+            description=f"Evaluation dataset for {project} from {start_date} to {end_date}",
+            examples=examples,
+        )
+
+    def _build_example_from_runs(
+        self,
+        trace_metadata: TraceMetadata,
+        run_data_list: List[dict],
+        eval_type: Optional[str] = None,
+    ) -> Optional[DatasetExample]:
+        """Build dataset example from database run data.
+
+        Args:
+            trace_metadata: Trace metadata
+            run_data_list: List of run data from database
+            eval_type: Evaluation type for formatting
+
+        Returns:
+            Dataset example or None if trace cannot be processed
+        """
+        try:
+            # Aggregate inputs, outputs, and reference from all runs
+            all_inputs = {}
+            all_outputs = {}
+            all_reference = {}
+
+            for run_data in run_data_list:
+                # Extract inputs (typically from root run only)
+                run_inputs = self._extract_inputs(run_data)
+                self._deep_merge_dict(all_inputs, run_inputs)
+
+                # Extract outputs (from all runs, but prioritize final outputs)
+                run_outputs = self._extract_outputs(run_data)
+                self._deep_merge_dict(all_outputs, run_outputs)
+
+                # Extract reference data (human feedback, verdicts)
+                run_reference = self._extract_reference(run_data)
+                self._deep_merge_dict(all_reference, run_reference)
+
+            return DatasetExample(
+                inputs=all_inputs,
+                outputs=all_outputs,
+                reference=all_reference if all_reference else None,
+                metadata={
+                    "trace_id": trace_metadata.trace_id,
+                    "project": trace_metadata.project,
+                    "date": trace_metadata.date,
+                    "eval_type": eval_type,
+                },
+            )
+
+        except (json.JSONDecodeError, KeyError) as e:
+            console.print(
+                f"[yellow]Error building example for {trace_metadata.trace_id}: {e}[/yellow]"
+            )
+            return None
 
     def _build_example(
         self, metadata: TraceMetadata, eval_type: Optional[str] = None
@@ -521,46 +804,155 @@ class DatasetBuilder:
             return None
 
     def _extract_inputs(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract inputs from trace data."""
+        """Extract clean input fields from trace data."""
         inputs = {}
 
-        # Check trace level inputs (primary location)
-        trace = trace_data.get("trace", {})
-        if "inputs" in trace:
-            inputs.update(trace["inputs"])
+        # Handle both database format (direct) and file format (wrapped)
+        if "trace" in trace_data:
+            trace = trace_data["trace"]
+        else:
+            trace = trace_data
 
-        # Check direct inputs field (backup)
-        if "inputs" in trace_data:
-            inputs.update(trace_data["inputs"])
+        # Extract from input_data (primary location)
+        trace_inputs = trace.get("inputs", {})
+        input_data = trace_inputs.get("input_data", {})
 
-        # Check run inputs (backup)
-        if "run" in trace_data and "inputs" in trace_data["run"]:
-            inputs.update(trace_data["run"]["inputs"])
+        if isinstance(input_data, dict):
+            # Extract standard fields that appear in both eval types
+            for field in ["name", "description"]:
+                if field in input_data:
+                    inputs[field] = input_data[field]
+
+            # Extract crypto_symbol as symbol
+            if "crypto_symbol" in input_data:
+                inputs["symbol"] = input_data["crypto_symbol"]
+            elif "symbol" in input_data:
+                inputs["symbol"] = input_data["symbol"]
+
+            # Extract website-specific fields
+            for field in ["website_url", "network", "contract_address", "social_profiles"]:
+                if field in input_data:
+                    inputs[field] = input_data[field]
+
+        # Fallback: try to extract from direct fields if input_data not available
+        if not inputs and trace_inputs:
+            # Try direct field extraction as backup
+            for field in [
+                "name",
+                "description",
+                "website_url",
+                "network",
+                "contract_address",
+                "social_profiles",
+            ]:
+                if field in trace_inputs:
+                    inputs[field] = trace_inputs[field]
+
+            # Handle symbol/crypto_symbol mapping
+            if "crypto_symbol" in trace_inputs:
+                inputs["symbol"] = trace_inputs["crypto_symbol"]
+            elif "symbol" in trace_inputs:
+                inputs["symbol"] = trace_inputs["symbol"]
 
         return inputs
 
     def _extract_outputs(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract AI outputs from trace data."""
+        """Extract clean evaluation outputs from trace data."""
         outputs = {}
 
-        # Check trace level outputs (primary location)
-        trace = trace_data.get("trace", {})
-        if "outputs" in trace and trace["outputs"] is not None:
-            outputs.update(trace["outputs"])
+        # Handle both database format (direct) and file format (wrapped)
+        if "trace" in trace_data:
+            trace = trace_data["trace"]
+        else:
+            trace = trace_data
 
-        # Check direct outputs field (backup)
-        if "outputs" in trace_data and trace_data["outputs"] is not None:
-            outputs.update(trace_data["outputs"])
+        # Get outputs from trace level
+        trace_outputs = trace.get("outputs", {})
+        if not trace_outputs:
+            # Fallback to top-level outputs
+            trace_outputs = trace_data.get("outputs", {})
 
-        # Check run outputs (backup)
-        if (
-            "run" in trace_data
-            and "outputs" in trace_data["run"]
-            and trace_data["run"]["outputs"] is not None
-        ):
-            outputs.update(trace_data["run"]["outputs"])
+        # Handle None outputs (e.g., from error traces)
+        if trace_outputs is None:
+            trace_outputs = {}
+
+        # Navigate through nested analysis structures
+        name_analysis = trace_outputs.get("name_analysis", {}) or {}
+        website_analysis = trace_outputs.get("website_analysis", {}) or {}
+
+        # Extract boolean evaluation results
+        self._extract_boolean_results(outputs, name_analysis, website_analysis, trace_outputs)
 
         return outputs
+
+    def _extract_boolean_results(
+        self, outputs: dict, name_analysis: dict, website_analysis: dict, trace_outputs: dict
+    ):
+        """Extract boolean evaluation results from nested structures."""
+
+        # Extract is_meme - use the first available value (don't rely on 'or' for False values)
+        meme_check = None
+        if "meme_check" in name_analysis:
+            meme_check = name_analysis["meme_check"]
+        elif "meme_check" in website_analysis:
+            meme_check = website_analysis["meme_check"]
+        elif "meme_check" in trace_outputs:
+            meme_check = trace_outputs["meme_check"]
+
+        if isinstance(meme_check, dict):
+            outputs["is_meme"] = bool(meme_check.get("is_meme", False))
+        elif meme_check is not None:
+            outputs["is_meme"] = bool(meme_check)
+        else:
+            outputs["is_meme"] = bool(trace_outputs.get("is_meme", False))
+
+        # Extract is_explicit - use the first available value
+        explicit_check = None
+        if "explicit_check" in name_analysis:
+            explicit_check = name_analysis["explicit_check"]
+        elif "explicit_check" in website_analysis:
+            explicit_check = website_analysis["explicit_check"]
+        elif "explicit_check" in trace_outputs:
+            explicit_check = trace_outputs["explicit_check"]
+
+        if isinstance(explicit_check, dict):
+            outputs["is_explicit"] = bool(explicit_check.get("is_explicit", False))
+        elif explicit_check is not None:
+            outputs["is_explicit"] = bool(explicit_check)
+        else:
+            outputs["is_explicit"] = bool(trace_outputs.get("is_explicit", False))
+
+        # Extract trademark/conflict info - use the first available value
+        trademark_check = None
+        if "trademark_check" in name_analysis:
+            trademark_check = name_analysis["trademark_check"]
+        elif "trademark_check" in website_analysis:
+            trademark_check = website_analysis["trademark_check"]
+        elif "trademark_check" in trace_outputs:
+            trademark_check = trace_outputs["trademark_check"]
+
+        if isinstance(trademark_check, dict):
+            outputs["has_conflict"] = bool(trademark_check.get("has_conflict", False))
+            outputs["has_trademark_conflict"] = bool(trademark_check.get("has_conflict", False))
+        else:
+            outputs["has_conflict"] = bool(trace_outputs.get("has_conflict", False))
+            outputs["has_trademark_conflict"] = bool(
+                trace_outputs.get(
+                    "has_trademark_conflict", trace_outputs.get("has_conflict", False)
+                )
+            )
+
+        # Website-specific fields - check both analysis and direct fields
+        if website_analysis or trace_outputs.get("is_available") is not None:
+            outputs["is_available"] = bool(
+                website_analysis.get("is_available", trace_outputs.get("is_available", True))
+            )
+
+            malicious_check = website_analysis.get("malicious_check")
+            if isinstance(malicious_check, dict):
+                outputs["is_malicious"] = bool(malicious_check.get("is_dangerous", False))
+            else:
+                outputs["is_malicious"] = bool(trace_outputs.get("is_malicious", False))
 
     def _extract_reference(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract human feedback/reference from trace data."""
@@ -617,76 +1009,30 @@ class DatasetBuilder:
         outputs: Dict[str, Any],
         reference: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        """Format data for token_name evaluation type.
+        """Format data for token_name evaluation type with clean extracted data.
 
         Args:
-          inputs: Input data
-          outputs: Output data
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
           reference: Reference data
 
         Returns:
           Formatted inputs, outputs, and reference for token_name evaluation
         """
-        # Extract data from input_data if available (primary location)
-        input_data = inputs.get("input_data", {})
-        if isinstance(input_data, dict):
-            name = input_data.get("name", "")
-            symbol = input_data.get("crypto_symbol", "")
-            description = input_data.get("description", "")
-        else:
-            # Fallback to direct fields if input_data not found
-            name = inputs.get("name", "")
-            symbol = inputs.get("crypto_symbol", inputs.get("symbol", ""))
-            description = inputs.get("description", "")
-
-        # Format inputs according to required structure
+        # Format inputs - data is already clean from _extract_inputs()
         formatted_inputs = {
-            "name": name,
-            "symbol": symbol,
-            "description": description,
+            "name": inputs.get("name", ""),
+            "symbol": inputs.get("symbol", ""),
+            "description": inputs.get("description", ""),
         }
 
-        # Format outputs according to required structure
-        formatted_outputs = {}
+        # Format outputs - data is already clean from _extract_outputs()
+        formatted_outputs = {
+            "is_meme": outputs.get("is_meme", False),
+            "is_explicit": outputs.get("is_explicit", False),
+            "has_conflict": outputs.get("has_conflict", False),
+        }
 
-        # Check if outputs are nested under name_analysis
-        analysis_data = outputs.get("name_analysis", outputs)
-
-        # Extract is_meme from meme_check
-        if "meme_check" in analysis_data:
-            meme_result = analysis_data["meme_check"]
-            if isinstance(meme_result, dict):
-                is_meme = meme_result.get("is_meme", False)
-                formatted_outputs["is_meme"] = bool(is_meme)
-            else:
-                formatted_outputs["is_meme"] = False
-        else:
-            formatted_outputs["is_meme"] = False
-
-        # Extract is_explicit from explicit_check
-        if "explicit_check" in analysis_data:
-            explicit_result = analysis_data["explicit_check"]
-            if isinstance(explicit_result, dict):
-                is_explicit = explicit_result.get("is_explicit", False)
-                formatted_outputs["is_explicit"] = bool(is_explicit)
-            else:
-                formatted_outputs["is_explicit"] = False
-        else:
-            formatted_outputs["is_explicit"] = False
-
-        # Extract has_conflict from trademark_check
-        if "trademark_check" in analysis_data:
-            trademark_result = analysis_data["trademark_check"]
-            if isinstance(trademark_result, dict):
-                has_conflict = trademark_result.get("has_conflict", False)
-                formatted_outputs["has_conflict"] = bool(has_conflict)
-            else:
-                formatted_outputs["has_conflict"] = False
-        else:
-            formatted_outputs["has_conflict"] = False
-
-        # For token_name evaluation, we don't use reference data in the specific format
-        # Return empty reference or keep original for metadata purposes
         formatted_reference = reference
 
         return formatted_inputs, formatted_outputs, formatted_reference
@@ -697,95 +1043,50 @@ class DatasetBuilder:
         outputs: Dict[str, Any],
         reference: Dict[str, Any],
     ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
-        """Format data for website evaluation type.
+        """Format data for website evaluation type with clean extracted data.
 
         Args:
-          inputs: Input data
-          outputs: Output data
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
           reference: Reference data
 
         Returns:
           Formatted inputs, outputs, and reference for website evaluation
         """
-        # Extract data from input_data if available (primary location)
-        input_data = inputs.get("input_data", {})
-        if isinstance(input_data, dict):
-            name = input_data.get("name", "")
-            symbol = input_data.get("crypto_symbol", "")
-            description = input_data.get("description", "")
-            website_url = input_data.get("website_url", "")
-            network = input_data.get("network", "")
-            contract_address = input_data.get("contract_address", "")
-            social_profiles = input_data.get("social_profiles", [])
-        else:
-            # Fallback to direct fields if input_data not found
-            name = inputs.get("name", "")
-            symbol = inputs.get("crypto_symbol", inputs.get("symbol", ""))
-            description = inputs.get("description", "")
-            website_url = inputs.get("website_url", "")
-            network = inputs.get("network", "")
-            contract_address = inputs.get("contract_address", "")
-            social_profiles = inputs.get("social_profiles", [])
-
-        # Format inputs according to required structure for website evaluation
+        # Format inputs - data is already clean from _extract_inputs()
         formatted_inputs = {
-            "name": name,
-            "symbol": symbol,
-            "network": network,
-            "description": description,
-            "website_url": website_url,
-            "social_profiles": social_profiles,
-            "contract_address": contract_address,
+            "name": inputs.get("name", ""),
+            "symbol": inputs.get("symbol", ""),
+            "network": inputs.get("network", ""),
+            "description": inputs.get("description", ""),
+            "website_url": inputs.get("website_url", ""),
+            "social_profiles": inputs.get("social_profiles", []),
+            "contract_address": inputs.get("contract_address", ""),
         }
 
-        # Format outputs according to required structure
-        formatted_outputs = {}
-
-        # Check if outputs are nested under analysis sections
-        name_analysis = outputs.get("name_analysis", {})
-        website_analysis = outputs.get("website_analysis", {})
-
-        # Extract meme classification
-        meme_check = name_analysis.get("meme_check") or website_analysis.get("meme_check")
-        if meme_check:
-            is_meme = meme_check.get("is_meme", False)
-        else:
-            is_meme = outputs.get("is_meme", False)
-        formatted_outputs["is_meme"] = bool(is_meme)
-
-        # Extract explicit content classification
-        explicit_check = name_analysis.get("explicit_check") or website_analysis.get(
-            "explicit_check"
-        )
-        if explicit_check:
-            is_explicit = explicit_check.get("is_explicit", False)
-        else:
-            is_explicit = outputs.get("is_explicit", False)
-        formatted_outputs["is_explicit"] = bool(is_explicit)
-
-        # Extract website availability
-        is_available = website_analysis.get("is_available", True)
-        formatted_outputs["is_available"] = bool(is_available)
-
-        # Extract malicious check
-        malicious_check = website_analysis.get("malicious_check", {})
-        if malicious_check:
-            is_malicious = malicious_check.get("is_dangerous", False)
-        else:
-            is_malicious = outputs.get("is_malicious", False)
-        formatted_outputs["is_malicious"] = bool(is_malicious)
-
-        # Extract trademark conflict
-        trademark_check = name_analysis.get("trademark_check") or website_analysis.get(
-            "trademark_check"
-        )
-        if trademark_check:
-            has_trademark_conflict = trademark_check.get("has_conflict", False)
-        else:
-            has_trademark_conflict = outputs.get("has_trademark_conflict", False)
-        formatted_outputs["has_trademark_conflict"] = bool(has_trademark_conflict)
+        # Format outputs - data is already clean from _extract_outputs()
+        formatted_outputs = {
+            "is_meme": outputs.get("is_meme", False),
+            "is_explicit": outputs.get("is_explicit", False),
+            "is_available": outputs.get("is_available", True),
+            "is_malicious": outputs.get("is_malicious", False),
+            "has_trademark_conflict": outputs.get("has_trademark_conflict", False),
+        }
 
         return formatted_inputs, formatted_outputs, reference
+
+    def _deep_merge_dict(self, target: dict, source: dict) -> None:
+        """Deep merge source dictionary into target dictionary.
+
+        Args:
+            target: Target dictionary to merge into
+            source: Source dictionary to merge from
+        """
+        for key, value in source.items():
+            if key in target and isinstance(target[key], dict) and isinstance(value, dict):
+                self._deep_merge_dict(target[key], value)
+            else:
+                target[key] = value
 
 
 class LangSmithUploader:

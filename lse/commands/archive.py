@@ -40,22 +40,12 @@ def archive_fetch(
         "--force",
         help="Skip confirmation if local folder already exists",
     ),
-    include_children: bool = typer.Option(
-        False,
-        "--include-children",
-        help="Fetch all child runs for each trace (complete hierarchy)",
-    ),
-    delay_ms: int = typer.Option(
-        200,
-        "--delay-ms",
-        help="Delay in milliseconds between trace hierarchy requests (default: 200)",
-    ),
 ) -> None:
     """Fetch all traces for a specific date and project.
 
     This command fetches ALL traces (no limit) for the given date
     and stores them in the local filesystem organized by creation date.
-    Use --include-children to fetch complete trace hierarchies with all child runs.
+    Always fetches complete trace hierarchies including all child runs.
     """
     try:
         from lse.client import LangSmithClient
@@ -104,8 +94,8 @@ def archive_fetch(
         console.print(f"[dim]Fetching traces for exact UTC day: {start_dt} to {end_dt}[/dim]")
 
         # Fetch traces with progress
-        with ProgressContext("Fetching root traces"):
-            # Fetch ALL root traces for this exact UTC day (no limit)
+        with ProgressContext("Fetching traces"):
+            # Fetch ALL traces for this exact UTC day (no limit)
             root_runs = client.search_runs(
                 project_name=project,
                 start_time=start_dt.isoformat(),
@@ -117,48 +107,44 @@ def archive_fetch(
             console.print(f"[yellow]No traces found for {project} on {date} (UTC)[/yellow]")
             return
 
-        console.print(f"[green]Found {len(root_runs)} root traces for {date} (UTC)[/green]")
+        console.print(f"[green]Found {len(root_runs)} traces for {date} (UTC)[/green]")
 
-        # If include_children is True, fetch all child runs for each trace
+        # Always fetch all child runs for each trace (complete hierarchies)
         all_runs = []
-        if include_children:
-            console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
-            if delay_ms > 0:
-                estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
-                console.print(
-                    f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
+        console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
+        # Use hardcoded 1000ms delay to avoid rate limits
+        delay_ms = 1000
+        estimated_time = (len(root_runs) * delay_ms) / 1000 / 60  # minutes
+        console.print(
+            f"[dim]Using {delay_ms}ms delay between requests (est. {estimated_time:.1f}min)[/dim]"
+        )
+
+        with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
+            task_id = progress.add_task("Processing traces", total=len(root_runs))
+
+            for i, root_run in enumerate(root_runs):
+                progress.update(
+                    task_id,
+                    advance=1,
+                    description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
                 )
 
-            with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
-                task_id = progress.add_task("Processing traces", total=len(root_runs))
+                # Fetch complete hierarchy for this trace with enhanced feedback (Phase 12)
+                trace_runs = client.fetch_trace_hierarchy_with_feedback(root_run.id)
+                all_runs.extend(trace_runs)
 
-                for i, root_run in enumerate(root_runs):
-                    progress.update(
-                        task_id,
-                        advance=1,
-                        description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
-                    )
+                # Add 1000ms delay to avoid rate limits
+                time.sleep(1.0)
 
-                    # Fetch complete hierarchy for this trace
-                    trace_runs = client.fetch_trace_hierarchy(root_run.id)
-                    all_runs.extend(trace_runs)
+        console.print(
+            f"[green]Total runs including children: {len(all_runs)} "
+            f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
+        )
 
-                    # Add configurable delay to avoid rate limits
-                    if delay_ms > 0:
-                        time.sleep(delay_ms / 1000.0)
-
-            console.print(
-                f"[green]Total runs including children: {len(all_runs)} "
-                f"(avg {len(all_runs) // len(root_runs) if root_runs else 0} runs per trace)[/green]"
-            )
-        else:
-            all_runs = root_runs
-            console.print("[dim]Use --include-children to fetch complete trace hierarchies[/dim]")
-
-        # Save all runs with progress
-        console.print(f"[blue]Saving {len(all_runs)} runs to local storage...[/blue]")
-        with ProgressContext("Saving runs"):
-            saved_paths = storage.save_traces(
+        # Save all runs with progress (using enhanced storage for Phase 12)
+        console.print(f"[blue]Saving {len(all_runs)} enhanced runs to local storage...[/blue]")
+        with ProgressContext("Saving enhanced runs"):
+            saved_paths = storage.save_enhanced_traces(
                 all_runs,
                 project_name=project,
                 timestamp=None,  # Use current timestamp for filename uniqueness
@@ -213,7 +199,7 @@ def archive_zip(
             raise typer.Exit(1)
 
         console.print(
-            f"[green]Found {stats['trace_files']} trace files ({stats['total_size_mb']} MB)[/green]"
+            f"[green]Found {stats['run_files']} run files ({stats['total_size_mb']} MB)[/green]"
         )
 
         # Set up output directory
@@ -228,7 +214,7 @@ def archive_zip(
             progress.update(task, completed=1)
 
         console.print(f"[green]✅ Successfully created zip archive: {zip_path}[/green]")
-        console.print(f"[dim]Zip file contains {stats['trace_files']} trace files[/dim]")
+        console.print(f"[dim]Zip file contains {stats['run_files']} run files[/dim]")
 
     except Exception as e:
         logger.error(f"Archive zip failed: {e}")
@@ -605,7 +591,7 @@ def archive_main(
             # Get archive stats
             stats = archive_manager.get_archive_stats(project, date)
             console.print(
-                f"[dim]Archiving {stats['trace_files']} trace files ({stats['total_size_mb']} MB)[/dim]"
+                f"[dim]Archiving {stats['run_files']} run files ({stats['total_size_mb']} MB)[/dim]"
             )
 
             # Create zip
@@ -663,4 +649,608 @@ def archive_main(
     except Exception as e:
         logger.error(f"Archive workflow failed: {e}")
         typer.echo(f"❌ Archive workflow failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@archive_app.command("to-db")
+def archive_to_db(
+    date: str = typer.Option(
+        ...,
+        "--date",
+        help="Date to load traces to database (YYYY-MM-DD format)",
+    ),
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project name to load traces for",
+    ),
+) -> None:
+    """Load existing run files to database.
+
+    Reads locally stored run JSON files and stores them in the Postgres database.
+    Each JSON file represents one run and will be stored individually in the runs table.
+    """
+    try:
+        import asyncio
+        from datetime import datetime
+        from lse.data_fetcher import LangSmithDataFetcher
+        from lse.database import create_database_manager
+        import json
+
+        console.print(f"[blue]💾 Loading {project} traces from {date} to database[/blue]")
+
+        # Validate date format
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]❌ Invalid date format '{date}'. Expected YYYY-MM-DD[/red]")
+            raise typer.Exit(1)
+
+        async def _load_to_db():
+            # Initialize components
+            settings = get_settings()
+            archive_manager = ArchiveManager(settings)
+
+            # Check if trace files exist
+            trace_folder = archive_manager.get_trace_folder(project, date)
+            if not trace_folder.exists():
+                console.print(f"[red]❌ No run files found for {project} on {date}[/red]")
+                console.print(
+                    f"[yellow]Run 'lse archive fetch --project {project} --date {date}' first[/yellow]"
+                )
+                raise typer.Exit(1)
+
+            # Find all JSON files
+            json_files = list(trace_folder.glob("*.json"))
+            json_files = [
+                f for f in json_files if not f.name.startswith("_")
+            ]  # Skip metadata files
+
+            if not json_files:
+                console.print(f"[red]❌ No trace JSON files found in {trace_folder}[/red]")
+                raise typer.Exit(1)
+
+            console.print(f"[green]Found {len(json_files)} run files to load[/green]")
+
+            # Set up database connection
+            db_manager = await create_database_manager(settings)
+            fetcher = LangSmithDataFetcher(settings, db_manager)
+
+            # Load runs from JSON files (Phase 12: detect enhanced vs legacy files)
+            runs_data = []
+            enhanced_runs_data = []
+            console.print("[blue]Reading run files...[/blue]")
+
+            with Progress() as progress:
+                task = progress.add_task("Loading files", total=len(json_files))
+
+                for json_file in json_files:
+                    try:
+                        with open(json_file, "r") as f:
+                            file_data = json.load(f)
+
+                            # Handle different JSON file formats
+                            if "trace" in file_data:
+                                # New format with metadata wrapper
+                                run_data = file_data["trace"]
+
+                                # Check if this is an enhanced file (Phase 12)
+                                metadata = file_data.get("metadata", {})
+                                is_enhanced = metadata.get("enhanced_feedback", False)
+
+                                if is_enhanced:
+                                    enhanced_runs_data.append(run_data)
+                                else:
+                                    runs_data.append(run_data)
+
+                            elif "metadata" in file_data and "id" not in file_data:
+                                # Skip if it's just metadata without trace data
+                                console.print(
+                                    f"[yellow]⚠️  Skipping metadata-only file: {json_file.name}[/yellow]"
+                                )
+                                progress.update(task, advance=1)
+                                continue
+                            else:
+                                # Assume it's direct run data (legacy format)
+                                run_data = file_data
+                                runs_data.append(run_data)
+                        progress.update(task, advance=1)
+                    except Exception as e:
+                        console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
+                        progress.update(task, advance=1)
+
+            total_runs = len(runs_data) + len(enhanced_runs_data)
+            if total_runs == 0:
+                console.print("[red]❌ No valid trace data found in files[/red]")
+                raise typer.Exit(1)
+
+            console.print(
+                f"[green]Loaded {total_runs} runs: {len(runs_data)} legacy, {len(enhanced_runs_data)} enhanced[/green]"
+            )
+
+            # Storage results tracking
+            total_stored = 0
+            total_errors = 0
+
+            # Process enhanced runs first (Phase 12)
+            if enhanced_runs_data:
+                console.print(
+                    f"[blue]Storing {len(enhanced_runs_data)} enhanced runs in database...[/blue]"
+                )
+
+                with Progress() as progress:
+                    task = progress.add_task("Storing enhanced runs", total=1)
+
+                    enhanced_result = await fetcher.storage.store_enhanced_runs_batch(
+                        enhanced_runs_data, project
+                    )
+                    total_stored += enhanced_result["stored"]
+                    total_errors += enhanced_result["errors"]
+
+                    progress.update(task, completed=1)
+
+                console.print(
+                    f"[green]✅ Enhanced runs stored: {enhanced_result['stored']}[/green]"
+                )
+                if enhanced_result["errors"] > 0:
+                    console.print(
+                        f"[yellow]⚠️  Enhanced runs errors: {enhanced_result['errors']}[/yellow]"
+                    )
+
+            # Process legacy runs if any exist
+            if runs_data:
+                console.print(f"[blue]Processing {len(runs_data)} legacy runs...[/blue]")
+
+                # Convert JSON data to Run objects for legacy storage
+                from langsmith.schemas import Run
+                from uuid import UUID
+                from datetime import datetime as dt
+
+                runs = []
+                console.print("[blue]Converting legacy runs to Run objects...[/blue]")
+
+                for run_data in runs_data:
+                    try:
+                        # Convert string IDs to UUIDs and datetime strings to datetime objects
+                        run_dict = run_data.copy()
+
+                        # Convert ID fields to UUIDs
+                        if "id" in run_dict and isinstance(run_dict["id"], str):
+                            run_dict["id"] = UUID(run_dict["id"])
+                        if "trace_id" in run_dict and isinstance(run_dict["trace_id"], str):
+                            run_dict["trace_id"] = UUID(run_dict["trace_id"])
+                        if "parent_run_id" in run_dict and isinstance(
+                            run_dict["parent_run_id"], str
+                        ):
+                            run_dict["parent_run_id"] = UUID(run_dict["parent_run_id"])
+                        if "session_id" in run_dict and isinstance(run_dict["session_id"], str):
+                            run_dict["session_id"] = UUID(run_dict["session_id"])
+                        if "reference_example_id" in run_dict and isinstance(
+                            run_dict["reference_example_id"], str
+                        ):
+                            run_dict["reference_example_id"] = UUID(
+                                run_dict["reference_example_id"]
+                            )
+                        if "manifest_id" in run_dict and isinstance(run_dict["manifest_id"], str):
+                            run_dict["manifest_id"] = UUID(run_dict["manifest_id"])
+
+                        # Convert datetime strings to datetime objects
+                        for field in ["start_time", "end_time", "first_token_time"]:
+                            if field in run_dict and isinstance(run_dict[field], str):
+                                run_dict[field] = dt.fromisoformat(
+                                    run_dict[field].replace("Z", "+00:00")
+                                )
+
+                        # Create Run object
+                        run = Run(**run_dict)
+                        runs.append(run)
+
+                    except Exception as e:
+                        console.print(f"[yellow]⚠️  Skipping invalid legacy run data: {e}[/yellow]")
+
+                if runs:
+                    console.print(f"[green]Created {len(runs)} legacy Run objects[/green]")
+
+                    # Store legacy runs in database
+                    console.print("[blue]Storing legacy runs in database...[/blue]")
+
+                    with Progress() as progress:
+                        task = progress.add_task("Storing legacy runs", total=1)
+
+                        legacy_result = await fetcher.storage.store_runs_batch(runs, project)
+                        total_stored += legacy_result["stored"]
+                        total_errors += legacy_result["errors"]
+
+                        progress.update(task, completed=1)
+
+                    console.print(
+                        f"[green]✅ Legacy runs stored: {legacy_result['stored']}[/green]"
+                    )
+                    if legacy_result["errors"] > 0:
+                        console.print(
+                            f"[yellow]⚠️  Legacy runs errors: {legacy_result['errors']}[/yellow]"
+                        )
+                else:
+                    console.print("[yellow]⚠️  No valid legacy runs could be created[/yellow]")
+
+            if total_stored == 0:
+                console.print("[red]❌ No runs were successfully stored in database[/red]")
+                raise typer.Exit(1)
+
+            # Close database connection
+            await db_manager.close()
+
+        # Run the async function
+        asyncio.run(_load_to_db())
+
+    except Exception as e:
+        logger.error(f"Archive to-db failed: {e}")
+        console.print(f"[red]❌ Archive to-db failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@archive_app.command("full-sweep")
+def archive_full_sweep(
+    date: str = typer.Option(
+        ...,
+        "--date",
+        help="Date for complete archival workflow (YYYY-MM-DD format)",
+    ),
+    project: str = typer.Option(
+        ...,
+        "--project",
+        help="Project name for complete archival workflow",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Skip all confirmation prompts",
+    ),
+) -> None:
+    """Complete archival workflow: fetch → zip → upload → populate database.
+
+    Performs the entire archival process in sequence:
+    1. Fetch traces from LangSmith API to local files (with complete trace hierarchies)
+    2. Create zip archive from local files
+    3. Upload zip archive to Google Drive
+    4. Load trace data to Postgres database
+    """
+    try:
+        import asyncio
+        from datetime import datetime
+
+        console.print(
+            f"[blue]🚀 Starting complete archival workflow for {project} on {date}[/blue]"
+        )
+        console.print("[dim]This will: fetch → zip → upload → populate database[/dim]")
+
+        # Validate date format
+        try:
+            datetime.strptime(date, "%Y-%m-%d")
+        except ValueError:
+            console.print(f"[red]❌ Invalid date format '{date}'. Expected YYYY-MM-DD[/red]")
+            raise typer.Exit(1)
+
+        if not force:
+            confirm = typer.confirm("Continue with complete archival workflow?")
+            if not confirm:
+                console.print("Archival workflow cancelled")
+                raise typer.Exit(0)
+
+        # Step 1: Fetch traces
+        console.print("[blue]📡 Step 1: Fetching traces...[/blue]")
+        try:
+            from lse.client import LangSmithClient
+            from lse.storage import TraceStorage
+            from lse.timezone import make_date_range_inclusive
+            from lse.utils import ProgressContext
+
+            # Initialize components
+            settings = get_settings()
+            archive_manager = ArchiveManager(settings)
+
+            # Check if target folder already exists
+            target_folder = archive_manager.get_trace_folder(project, date)
+            if target_folder.exists() and not force:
+                existing_files = [
+                    f for f in target_folder.glob("*.json") if not f.name.startswith("_")
+                ]
+                if existing_files:
+                    console.print(
+                        f"[yellow]⚠️  Target folder already contains {len(existing_files)} trace files[/yellow]"
+                    )
+                    if not typer.confirm("Overwrite existing traces?"):
+                        console.print("Archival workflow cancelled")
+                        raise typer.Exit(0)
+
+            # Set up API client and storage
+            settings.validate_required_fields()
+            client = LangSmithClient(settings)
+            storage = TraceStorage(settings)
+
+            # Create date range
+            start_dt, end_dt = make_date_range_inclusive(date, date)
+
+            # Fetch traces
+            with ProgressContext("Fetching traces"):
+                root_runs = client.search_runs(
+                    project_name=project,
+                    start_time=start_dt.isoformat(),
+                    end_time=end_dt.isoformat(),
+                    limit=None,
+                )
+
+            if not root_runs:
+                console.print(f"[yellow]No traces found for {project} on {date}[/yellow]")
+                return
+
+            console.print(f"[green]Found {len(root_runs)} traces[/green]")
+
+            # Always fetch child runs (complete trace hierarchies) - using enhanced method
+            all_runs = []
+            console.print("[blue]Fetching child runs for complete trace hierarchies...[/blue]")
+            with ProgressContext(f"Fetching child runs for {len(root_runs)} traces") as progress:
+                task_id = progress.add_task("Processing traces", total=len(root_runs))
+
+                for i, root_run in enumerate(root_runs):
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"Fetching hierarchy {i + 1}/{len(root_runs)}",
+                    )
+                    try:
+                        # Fetch complete hierarchy with enhanced feedback (Phase 12)
+                        trace_runs = client.fetch_trace_hierarchy_with_feedback(root_run.id)
+                        all_runs.extend(trace_runs)
+                        # Add 1000ms delay to avoid rate limits
+                        time.sleep(1.0)
+                    except Exception as e:
+                        console.print(
+                            f"[yellow]⚠️  Failed to fetch children for trace {root_run.trace_id}: {e}[/yellow]"
+                        )
+
+                console.print(f"[green]Total runs including children: {len(all_runs)}[/green]")
+
+            # Save traces (using enhanced storage for Phase 12)
+            with ProgressContext("Saving enhanced traces"):
+                saved_paths = storage.save_enhanced_traces(all_runs, project_name=project)
+
+            console.print(f"[green]✓ Step 1 complete: Saved {len(saved_paths)} runs[/green]")
+
+        except Exception as e:
+            console.print(f"[red]❌ Step 1 failed (fetch): {e}[/red]")
+            raise typer.Exit(1)
+
+        # Step 2: Create zip file
+        console.print("[blue]📦 Step 2: Creating zip archive...[/blue]")
+        try:
+            stats = archive_manager.get_archive_stats(project, date)
+            console.print(
+                f"[dim]Archiving {stats['run_files']} run files ({stats['total_size_mb']} MB)[/dim]"
+            )
+
+            zip_output_dir = Path("./archives")
+            with Progress() as progress:
+                task = progress.add_task("[green]Creating zip archive...", total=1)
+                zip_path = archive_manager.create_zip_archive(project, date, zip_output_dir)
+                progress.update(task, completed=1)
+
+            console.print(f"[green]✓ Step 2 complete: Created {zip_path}[/green]")
+
+        except Exception as e:
+            console.print(f"[red]❌ Step 2 failed (zip): {e}[/red]")
+            raise typer.Exit(1)
+
+        # Step 3: Upload to Google Drive
+        console.print("[blue]☁️  Step 3: Uploading to Google Drive...[/blue]")
+        try:
+            from lse.drive import GoogleDriveClient
+
+            drive_client = GoogleDriveClient(settings)
+
+            # Validate Google Drive configuration
+            config_result = drive_client.validate_configuration()
+            if not config_result["valid"]:
+                console.print(
+                    f"[red]❌ Google Drive configuration invalid: {config_result['error']}[/red]"
+                )
+                raise typer.Exit(1)
+
+            # Upload
+            with Progress() as progress:
+                task = progress.add_task("[blue]Uploading to Google Drive...", total=1)
+                drive_client.upload_archive(zip_path, project, force)
+                progress.update(task, completed=1)
+
+            console.print("[green]✓ Step 3 complete: Uploaded to Google Drive[/green]")
+
+        except Exception as e:
+            console.print(f"[red]❌ Step 3 failed (upload): {e}[/red]")
+            raise typer.Exit(1)
+
+        # Step 4: Load to database
+        console.print("[blue]💾 Step 4: Loading traces to database...[/blue]")
+        try:
+            # Reuse the to-db logic
+            async def _load_to_db():
+                from lse.data_fetcher import LangSmithDataFetcher
+                from lse.database import create_database_manager
+                import json
+                from langsmith.schemas import Run
+                from uuid import UUID
+                from datetime import datetime as dt
+
+                # Set up database connection
+                db_manager = await create_database_manager(settings)
+                fetcher = LangSmithDataFetcher(settings, db_manager)
+
+                # Find all JSON files
+                trace_folder = archive_manager.get_trace_folder(project, date)
+                json_files = [f for f in trace_folder.glob("*.json") if not f.name.startswith("_")]
+
+                # Load runs from JSON files (Phase 12: detect enhanced vs legacy files)
+                runs_data = []
+                enhanced_runs_data = []
+
+                with Progress() as progress:
+                    task = progress.add_task("Loading files", total=len(json_files))
+
+                    for json_file in json_files:
+                        try:
+                            with open(json_file, "r") as f:
+                                file_data = json.load(f)
+
+                                # Handle different JSON file formats
+                                if "trace" in file_data:
+                                    # New format with metadata wrapper
+                                    run_data = file_data["trace"]
+
+                                    # Check if this is an enhanced file (Phase 12)
+                                    metadata = file_data.get("metadata", {})
+                                    is_enhanced = metadata.get("enhanced_feedback", False)
+
+                                    if is_enhanced:
+                                        enhanced_runs_data.append(run_data)
+                                    else:
+                                        runs_data.append(run_data)
+                                elif "metadata" in file_data and "id" not in file_data:
+                                    # Skip if it's just metadata without trace data
+                                    progress.update(task, advance=1)
+                                    continue
+                                else:
+                                    # Assume it's direct run data (legacy format)
+                                    run_data = file_data
+                                    runs_data.append(run_data)
+                            progress.update(task, advance=1)
+                        except Exception as e:
+                            console.print(f"[yellow]⚠️  Skipping {json_file.name}: {e}[/yellow]")
+                            progress.update(task, advance=1)
+
+                total_runs = len(runs_data) + len(enhanced_runs_data)
+                if total_runs == 0:
+                    console.print("[red]❌ No valid trace data found in files[/red]")
+                    return {"stored": 0, "errors": 0}
+
+                console.print(
+                    f"[green]Loaded {total_runs} runs: {len(runs_data)} legacy, {len(enhanced_runs_data)} enhanced[/green]"
+                )
+
+                # Storage results tracking
+                total_stored = 0
+                total_errors = 0
+
+                # Process enhanced runs first (Phase 12)
+                if enhanced_runs_data:
+                    console.print(
+                        f"[blue]Storing {len(enhanced_runs_data)} enhanced runs in database...[/blue]"
+                    )
+
+                    with Progress() as progress:
+                        task = progress.add_task("Storing enhanced runs", total=1)
+
+                        enhanced_result = await fetcher.storage.store_enhanced_runs_batch(
+                            enhanced_runs_data, project
+                        )
+                        total_stored += enhanced_result["stored"]
+                        total_errors += enhanced_result["errors"]
+
+                        progress.update(task, completed=1)
+
+                    console.print(
+                        f"[green]✅ Enhanced runs stored: {enhanced_result['stored']}[/green]"
+                    )
+                    if enhanced_result["errors"] > 0:
+                        console.print(
+                            f"[yellow]⚠️  Enhanced runs errors: {enhanced_result['errors']}[/yellow]"
+                        )
+
+                # Process legacy runs if any exist
+                if runs_data:
+                    console.print(
+                        f"[blue]Converting and storing {len(runs_data)} legacy runs...[/blue]"
+                    )
+
+                    # Convert to Run objects
+                    runs = []
+                    for run_data in runs_data:
+                        try:
+                            run_dict = run_data.copy()
+
+                            # Convert ID fields to UUIDs
+                            for field in [
+                                "id",
+                                "trace_id",
+                                "parent_run_id",
+                                "session_id",
+                                "reference_example_id",
+                                "manifest_id",
+                            ]:
+                                if (
+                                    field in run_dict
+                                    and isinstance(run_dict[field], str)
+                                    and run_dict[field]
+                                ):
+                                    run_dict[field] = UUID(run_dict[field])
+
+                            # Convert datetime strings
+                            for field in ["start_time", "end_time", "first_token_time"]:
+                                if field in run_dict and isinstance(run_dict[field], str):
+                                    run_dict[field] = dt.fromisoformat(
+                                        run_dict[field].replace("Z", "+00:00")
+                                    )
+
+                            run = Run(**run_dict)
+                            runs.append(run)
+                        except Exception as e:
+                            console.print(f"[yellow]⚠️  Skipping invalid run: {e}[/yellow]")
+
+                    if runs:
+                        console.print(f"[green]Created {len(runs)} legacy Run objects[/green]")
+
+                        # Store legacy runs in database
+                        console.print("[blue]Storing legacy runs in database...[/blue]")
+
+                        with Progress() as progress:
+                            task = progress.add_task("Storing legacy runs", total=1)
+
+                            legacy_result = await fetcher.storage.store_runs_batch(runs, project)
+                            total_stored += legacy_result["stored"]
+                            total_errors += legacy_result["errors"]
+
+                            progress.update(task, completed=1)
+
+                        console.print(
+                            f"[green]✅ Legacy runs stored: {legacy_result['stored']}[/green]"
+                        )
+                        if legacy_result["errors"] > 0:
+                            console.print(
+                                f"[yellow]⚠️  Legacy runs errors: {legacy_result['errors']}[/yellow]"
+                            )
+
+                # Compile results
+                result = {"stored": total_stored, "errors": total_errors}
+
+                console.print(
+                    f"[green]✓ Step 4 complete: Stored {result['stored']} runs in database[/green]"
+                )
+
+                await db_manager.close()
+                return result
+
+            result = asyncio.run(_load_to_db())
+
+        except Exception as e:
+            console.print(f"[red]❌ Step 4 failed (database): {e}[/red]")
+            raise typer.Exit(1)
+
+        # Success!
+        console.print("[green]🎉 Complete archival workflow finished successfully![/green]")
+        console.print(f"[dim]• Fetched {len(all_runs)} runs for {project} on {date}[/dim]")
+        console.print(f"[dim]• Created zip archive: {zip_path}[/dim]")
+        console.print("[dim]• Uploaded to Google Drive[/dim]")
+        console.print(f"[dim]• Stored {result['stored']} runs in database[/dim]")
+
+    except Exception as e:
+        logger.error(f"Archive full-sweep failed: {e}")
+        console.print(f"[red]❌ Archive full-sweep failed: {e}[/red]")
         raise typer.Exit(1)

@@ -16,7 +16,7 @@ class RetryConfig:
 
     def __init__(
         self,
-        max_attempts: int = 3,
+        max_attempts: int = 5,
         base_delay: float = 1.0,
         max_delay: float = 60.0,
         backoff_multiplier: float = 2.0,
