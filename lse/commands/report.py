@@ -540,3 +540,141 @@ def zenrows_detail_command(
         logger.error(f"Detail report generation failed: {e}")
         typer.echo(f"Error: Detail report generation failed: {e}", err=True)
         raise typer.Exit(1)
+
+
+async def generate_is_available_report_from_db(
+    project_name: Optional[str] = None,
+    report_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> str:
+    """Generate is_available report from database for specified date(s).
+
+    Args:
+        project_name: Project to analyze (optional, defaults to all projects)
+        report_date: Single date to analyze
+        start_date: Start date for range analysis
+        end_date: End date for range analysis
+
+    Returns:
+        CSV formatted report string
+    """
+    try:
+        # Create database manager
+        db_manager = await create_database_manager()
+
+        try:
+            # Initialize database analyzer
+            analyzer = DatabaseTraceAnalyzer(db_manager)
+
+            logger.info("Analyzing is_available data from database")
+            analysis_results = await analyzer.analyze_is_available_from_db(
+                project_name=project_name,
+                report_date=report_date,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            # Format results as CSV using formatter
+            formatter = ReportFormatter()
+            return formatter.format_availability_report(analysis_results)
+
+        finally:
+            await db_manager.close()
+
+    except Exception as e:
+        logger.error(f"Database availability analysis failed: {e}")
+        # Return empty CSV with header on error
+        return "date,Trace count,is_available = false count,percentage\n"
+
+
+@report_app.command("is_available")
+def is_available_command(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(
+        None, "--start-date", help="Start date for range (YYYY-MM-DD)"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date", help="End date for range (YYYY-MM-DD)"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
+    ),
+) -> None:
+    """
+    Generate availability failure reports showing is_available=false patterns.
+
+    Analyzes stored LangSmith trace data to calculate availability failure rates
+    for traces where website_analysis.is_available was false.
+
+    Examples:
+
+      # Single day report for specific project
+      lse report is_available --date 2025-09-01 --project my-project
+
+      # All projects (aggregated) for single date
+      lse report is_available --date 2025-09-01
+
+      # Date range report for specific project
+      lse report is_available --start-date 2025-09-01 --end-date 2025-09-07 --project my-project
+
+      # Date range report for all projects
+      lse report is_available --start-date 2025-09-01 --end-date 2025-09-07
+    """
+    logger.info("Starting is_available report generation")
+
+    try:
+        # Validate date parameters
+        if date and (start_date or end_date):
+            raise ValidationError(
+                "Cannot specify both single date and date range. Use either --date OR --start-date/--end-date"
+            )
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both --start-date and --end-date required for range analysis")
+
+        if not date and not (start_date and end_date):
+            raise ValidationError(
+                "Either single date (--date) or date range (--start-date/--end-date) required"
+            )
+
+        # Parse and validate dates
+        from datetime import timezone
+
+        report_dt = None
+        start_dt = None
+        end_dt = None
+
+        if date:
+            report_dt = validate_date(date).replace(tzinfo=timezone.utc)
+            logger.info(f"Generating report for date: {date} (UTC timezone)")
+        else:
+            start_dt = validate_date(start_date).replace(tzinfo=timezone.utc)
+            end_dt = validate_date(end_date).replace(tzinfo=timezone.utc)
+            logger.info(
+                f"Generating report for date range: {start_date} to {end_date} (UTC timezone)"
+            )
+
+        # Generate report using database
+        report_output = asyncio.run(
+            generate_is_available_report_from_db(
+                project_name=project,
+                report_date=report_dt,
+                start_date=start_dt,
+                end_date=end_dt,
+            )
+        )
+
+        # Output CSV to stdout
+        typer.echo(report_output)
+        logger.info("Availability report generation completed successfully")
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error(f"Availability report generation failed: {e}")
+        typer.echo(f"Error: Availability report generation failed: {e}", err=True)
+        raise typer.Exit(1)

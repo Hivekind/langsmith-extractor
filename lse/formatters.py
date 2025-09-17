@@ -123,6 +123,46 @@ class ReportFormatter:
 
         return format_csv_report(analysis_data, "Zenrows Error Rate Report")
 
+    def format_availability_report(
+        self, analysis_data: Dict[str, Dict[str, Union[int, float]]]
+    ) -> str:
+        """Format availability analysis data as CSV report.
+
+        Args:
+            analysis_data: Analysis results from DatabaseTraceAnalyzer.analyze_is_available_from_db
+
+        Returns:
+            CSV formatted report string
+        """
+        self.logger.info("Formatting availability report")
+
+        if not analysis_data:
+            self.logger.warning("No availability analysis data provided, returning empty report")
+            return "date,Trace count,is_available = false count,percentage\n"
+
+        # CSV header for availability report
+        header = "date,Trace count,is_available = false count,percentage"
+        lines = [header]
+
+        # Sort dates for consistent output
+        for date_key in sorted(analysis_data.keys()):
+            data = analysis_data[date_key]
+
+            # Format percentage with 1 decimal place (no % symbol to match zenrows format)
+            percentage = f"{data['percentage']:.1f}"
+
+            # Create CSV row
+            line = (
+                f"{date_key},{data['total_traces']},{data['is_available_false_count']},{percentage}"
+            )
+            lines.append(line)
+
+        # Join with newlines and add final newline
+        result = "\n".join(lines) + "\n"
+
+        self.logger.debug(f"Generated availability CSV report with {len(lines) - 1} data rows")
+        return result
+
     def format_summary(self, analysis_data: Dict[str, Dict[str, Union[int, float]]]) -> str:
         """Format analysis data as human-readable summary.
 
