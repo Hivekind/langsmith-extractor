@@ -19,6 +19,7 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
 - [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) ✅ **COMPLETED**
 - [**Phase 16: Availability Dataset Curation (Best 100)**](#phase-16-availability-dataset-curation-best-100-) 🎯 **NEXT**
+- [**Phase 17: Is_Available Report Feature**](#phase-17-is_available-report-feature-) 🔄 **PLANNED**
 
 ---
 
@@ -1632,6 +1633,328 @@ lse eval create-dataset --project my-project --eval-type website --date 2025-09-
 - Performance monitoring for curation process efficiency
 - Advanced quality scoring algorithms for positive example selection
 - Configurable curation parameters (not just --best-100)
+
+## Phase 17: Is_Available Report Feature 🔄 **PLANNED**
+
+**Goal:** Add `is_available` report type to analyze website availability failures across traces  
+**Success Criteria:** New `lse report is_available` command provides comprehensive analysis of website availability issues with date range support
+
+### Feature Overview
+Add a new report type called `is_available` that analyzes traces to identify when website availability checks failed. This report will complement the existing zenrows error analysis by focusing specifically on the `is_available` field from trace outputs.
+
+### Problem Statement
+Current reporting focuses on zenrows scraper errors, but there's a need for dedicated analysis of website availability failures:
+
+1. **Availability-Specific Analysis**: Need reports showing when `is_available` was false vs general scraper errors
+2. **Business Visibility**: Stakeholders need clear metrics on website accessibility issues  
+3. **Trend Analysis**: Understanding patterns in website availability across different time periods
+4. **Complement Evaluation**: Report data that aligns with availability evaluation dataset insights
+
+### Technical Requirements
+
+#### Data Source
+The report will extract `is_available` values from the database field:
+```sql
+-- Extract from runs table 
+data->'outputs'->'website_analysis'->'is_available'
+```
+
+#### Report Logic
+- **Traces**: Analyze root runs (where `trace_id = run_id`) 
+- **Availability Status**: Extract boolean `is_available` from website_analysis outputs
+- **Count Logic**: Count traces where `is_available = false`
+- **Percentage Calculation**: `(is_available false count / total traces) * 100`
+
+### Command Interface
+
+#### New Report Command
+```bash
+# Single date availability report
+lse report is_available --date 2025-09-01
+
+# Date range availability report  
+lse report is_available --start-date 2025-09-01 --end-date 2025-09-07
+
+# Project-specific availability report
+lse report is_available --date 2025-09-01 --project my-project
+
+# All projects aggregated (default)
+lse report is_available --date 2025-09-01
+```
+
+#### Expected Output Format
+CSV format matching existing report patterns:
+```csv
+date,Trace count,is_available = false count,percentage
+2025-09-01,40,3,7.5
+2025-09-02,35,1,2.9
+2025-09-03,42,5,11.9
+```
+
+### Technical Implementation
+
+#### Phase 17.1: Database Query Logic `M`
+**Objective**: Implement database queries to extract availability data from traces
+
+**Key Features:**
+- Query root runs from database (`trace_id = run_id`)
+- Extract `is_available` from `data->'outputs'->'website_analysis'->'is_available'`
+- Support single date and date range operations
+- Handle project filtering (single project or all projects aggregated)
+
+**Implementation Details:**
+```python
+async def analyze_is_available_from_db(
+    self, 
+    project_name: Optional[str] = None,
+    report_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Analyze is_available field from database traces."""
+    
+    # Build date filter
+    date_filter = self._build_date_filter(report_date, start_date, end_date)
+    
+    # Query root runs with availability data
+    query = """
+    SELECT 
+        run_date::text as date,
+        COUNT(*) as total_traces,
+        COUNT(*) FILTER (
+            WHERE (data->'outputs'->'website_analysis'->>'is_available')::boolean = false
+        ) as false_count
+    FROM runs 
+    WHERE trace_id = run_id  -- Root runs only
+        AND data->'outputs'->'website_analysis'->'is_available' IS NOT NULL
+        {project_filter}
+        {date_filter}
+    GROUP BY run_date
+    ORDER BY run_date
+    """
+```
+
+#### Phase 17.2: Report Command Integration `M`
+**Objective**: Add `is_available` subcommand to existing report CLI structure
+
+**Key Features:**
+- Integrate with existing `lse report` command structure
+- Support date and date range parameters (matching zenrows-errors pattern)
+- Add project filtering capabilities
+- Maintain consistent CLI interface patterns
+
+**Command Structure:**
+```python
+@report_app.command("is_available")
+def is_available_command(
+    date: Optional[str] = typer.Option(None, "--date", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date for range"),
+    end_date: Optional[str] = typer.Option(None, "--end-date", help="End date for range"),
+    project: Optional[str] = typer.Option(None, "--project", help="Project to analyze"),
+) -> None:
+    """Generate availability failure reports showing is_available=false patterns."""
+```
+
+#### Phase 17.3: Output Formatting `M`
+**Objective**: Format availability analysis results into CSV output
+
+**Key Features:**
+- CSV output matching existing report format standards
+- Percentage calculations with proper rounding
+- Date formatting consistency
+- Handle edge cases (zero traces, missing data)
+
+**Output Format:**
+- Column headers: `date,Trace count,is_available = false count,percentage`
+- Date format: `YYYY-MM-DD`
+- Percentage format: `XX.X` (one decimal place)
+- Handle zero division gracefully
+
+#### Phase 17.4: Integration and Testing `M`
+**Objective**: Ensure seamless integration with existing report infrastructure
+
+**Key Features:**
+- Reuse existing database connection and analyzer infrastructure
+- Comprehensive test coverage for new report type
+- Error handling and edge case coverage
+- Performance testing with large datasets
+
+### Expected Usage Examples
+
+#### Daily Availability Analysis
+```bash
+# Check availability issues for a specific date
+lse report is_available --date 2025-09-13 --project crypto-scanner
+
+# Output:
+# date,Trace count,is_available = false count,percentage
+# 2025-09-13,150,8,5.3
+```
+
+#### Weekly Availability Trends
+```bash  
+# Analyze availability trends over a week
+lse report is_available --start-date 2025-09-01 --end-date 2025-09-07
+
+# Output:
+# date,Trace count,is_available = false count,percentage
+# 2025-09-01,40,3,7.5
+# 2025-09-02,35,1,2.9
+# 2025-09-03,42,5,11.9
+# 2025-09-04,38,2,5.3
+# 2025-09-05,45,4,8.9
+# 2025-09-06,41,1,2.4
+# 2025-09-07,39,3,7.7
+```
+
+#### Multi-Project Aggregation
+```bash
+# Aggregate availability across all projects
+lse report is_available --date 2025-09-13
+
+# Output combines all projects into single daily totals
+```
+
+### Quality Gates
+
+#### Phase 17.1 Completion Criteria
+- [ ] Database queries correctly extract `is_available` from website_analysis
+- [ ] Root run filtering works correctly (`trace_id = run_id`)
+- [ ] Date range filtering supports both single date and date ranges
+- [ ] Project filtering works for single projects and aggregated results
+
+#### Phase 17.2 Completion Criteria  
+- [ ] `is_available` subcommand integrated into existing report CLI
+- [ ] Parameter validation matches existing report command patterns
+- [ ] Help text and documentation clear and consistent
+- [ ] CLI interface follows established conventions
+
+#### Phase 17.3 Completion Criteria
+- [ ] CSV output format matches specification exactly
+- [ ] Percentage calculations accurate and properly rounded
+- [ ] Date formatting consistent with other reports
+- [ ] Edge cases handled gracefully (zero traces, missing data)
+
+#### Phase 17.4 Completion Criteria
+- [ ] Integration tests validate end-to-end functionality
+- [ ] Performance acceptable for large date ranges and datasets
+- [ ] Error handling comprehensive and user-friendly
+- [ ] Test coverage exceeds 95% for all new code
+
+### Implementation Plan
+
+#### Phase 17.1: Database Analysis Engine (Week 1)
+**Deliverables:**
+- [ ] Add `analyze_is_available_from_db()` method to DatabaseTraceAnalyzer
+- [ ] Implement SQL queries for availability data extraction
+- [ ] Add date range and project filtering logic
+- [ ] Create data aggregation and percentage calculation logic
+
+**Acceptance Criteria:**
+- Database queries return accurate availability statistics
+- Date filtering works for both single dates and ranges
+- Project filtering supports single projects and aggregation
+- Performance acceptable for typical date ranges
+
+#### Phase 17.2: CLI Command Implementation (Week 1)
+**Deliverables:**
+- [ ] Add `is_available` subcommand to report command group
+- [ ] Implement parameter validation and help text
+- [ ] Integrate with existing database analyzer infrastructure
+- [ ] Add async execution wrapper for database operations
+
+**Acceptance Criteria:**
+- CLI command accepts all specified parameters correctly
+- Help text provides clear usage guidance
+- Parameter validation prevents invalid input combinations
+- Error messages provide actionable feedback
+
+#### Phase 17.3: Output Formatting and Validation (Week 1) 
+**Deliverables:**
+- [ ] Implement CSV formatting for availability statistics
+- [ ] Add percentage calculation with proper rounding
+- [ ] Create output formatter integration
+- [ ] Add edge case handling for empty results
+
+**Acceptance Criteria:**
+- CSV output matches expected format specification
+- Percentage calculations mathematically correct
+- Edge cases handled without crashes or errors
+- Output formatting consistent with existing reports
+
+#### Phase 17.4: Testing and Quality Assurance (Week 1)
+**Deliverables:**
+- [ ] Comprehensive unit tests for database queries
+- [ ] Integration tests for CLI command functionality  
+- [ ] Performance tests with realistic datasets
+- [ ] Edge case and error handling tests
+
+**Acceptance Criteria:**
+- Test coverage exceeds 95% for all new functionality
+- Performance tests validate acceptable response times
+- Edge case tests cover all identified scenarios
+- Integration tests validate end-to-end workflows
+
+### Success Metrics
+
+#### Data Accuracy Metrics
+- **Query Correctness**: 100% accurate extraction of `is_available` values from database
+- **Calculation Accuracy**: Mathematical accuracy in percentage calculations 
+- **Date Handling**: Correct handling of UTC dates and timezone considerations
+- **Project Filtering**: Accurate aggregation across single and multiple projects
+
+#### Performance Metrics  
+- **Query Performance**: Availability reports complete within 30 seconds for any single date
+- **Range Performance**: Date range reports complete within 2 minutes for 7-day periods
+- **Memory Efficiency**: Report generation uses reasonable memory for large datasets
+- **Scalability**: Performance degrades gracefully with increasing data volumes
+
+#### User Experience Metrics
+- **Interface Consistency**: CLI interface matches patterns from existing report commands
+- **Error Handling**: Clear error messages for all failure scenarios
+- **Documentation Quality**: Help text provides sufficient guidance for users
+- **Output Clarity**: CSV format enables easy analysis and further processing
+
+### Risk Assessment
+
+#### Technical Risks
+- **Data Availability**: `is_available` field may not be present in all traces
+- **Query Performance**: Large date ranges could impact database performance
+- **Data Consistency**: Mixed data formats across different trace versions
+- **Integration Complexity**: Adding to existing report infrastructure may introduce regressions
+
+#### Mitigation Strategies
+- **Null Handling**: Implement robust null checking for missing availability data
+- **Query Optimization**: Use appropriate database indexes and query optimization
+- **Format Validation**: Validate data format compatibility across trace versions
+- **Regression Testing**: Comprehensive testing of existing report functionality
+
+#### Business Risks
+- **Stakeholder Expectations**: Report data must align with business understanding of availability
+- **Data Interpretation**: Users need guidance on interpreting availability vs zenrows error reports
+- **Workflow Integration**: New reports must fit into existing analysis workflows
+
+#### Risk Mitigation
+- **Clear Documentation**: Document relationship between availability and zenrows reports
+- **User Training**: Provide examples and guidance for report interpretation
+- **Phased Rollout**: Gradual deployment with stakeholder feedback incorporation
+
+### Dependencies
+
+#### Required Completions
+- Phase 11 (Reporting Database Migration) ✅ **COMPLETED**
+- Database populated with traces containing website_analysis data ✅ **AVAILABLE**
+- Existing report command infrastructure ✅ **AVAILABLE**
+
+#### Optional Enhancements
+- Phase 16 (Availability Dataset Curation) for comprehensive availability analysis
+- Enhanced error reporting integration for cross-reference analysis
+- Dashboard integration for real-time availability monitoring
+
+#### External Dependencies
+- PostgreSQL database with appropriate indexing for performance
+- Sufficient trace data with website_analysis outputs for meaningful reports
+- Stakeholder requirements validation for report format and content
 
 ---
 
