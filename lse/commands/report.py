@@ -223,13 +223,17 @@ def generate_zenrows_detail_report(
 
 async def generate_zenrows_report_from_db(
     project_name: Optional[str] = None,
-    single_date: Optional[datetime] = None,
+    report_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
 ) -> str:
-    """Generate zenrows error report from database for specified date.
+    """Generate zenrows error report from database for specified date(s).
 
     Args:
         project_name: Project to analyze (optional, defaults to all projects)
-        single_date: Single date to analyze (required)
+        report_date: Single date to analyze
+        start_date: Start date for range analysis
+        end_date: End date for range analysis
 
     Returns:
         CSV formatted report string
@@ -242,64 +246,13 @@ async def generate_zenrows_report_from_db(
             # Initialize database analyzer
             analyzer = DatabaseTraceAnalyzer(db_manager)
 
-            if project_name:
-                # Single project analysis
-                logger.info(f"Analyzing project from database: {project_name}")
-                analysis_results = await analyzer.analyze_zenrows_errors_from_db(
-                    project_name=project_name,
-                    report_date=single_date,
-                )
-            else:
-                # Multi-project analysis - get all projects from database
-                async with db_manager.get_session() as session:
-                    from sqlalchemy import text
-
-                    result = await session.execute(
-                        text(
-                            "SELECT DISTINCT project FROM runs WHERE run_date = :date ORDER BY project"
-                        ),
-                        {
-                            "date": single_date.date()
-                            if hasattr(single_date, "date")
-                            else single_date
-                        },
-                    )
-                    projects = [row[0] for row in result.fetchall()]
-
-                if not projects:
-                    logger.warning(f"No projects found in database for date {single_date}")
-                    return "Date,Total Traces,Zenrows Errors,Error Rate\n"
-
-                # Aggregate results across all projects
-                all_results = {}
-
-                for project in projects:
-                    logger.info(f"Analyzing project from database: {project}")
-
-                    project_results = await analyzer.analyze_zenrows_errors_from_db(
-                        project_name=project,
-                        report_date=single_date,
-                    )
-
-                    # Merge results by date
-                    for date_key, data in project_results.items():
-                        if date_key in all_results:
-                            # Aggregate data for this date across projects
-                            all_results[date_key]["total_traces"] += data["total_traces"]
-                            all_results[date_key]["zenrows_errors"] += data["zenrows_errors"]
-                        else:
-                            all_results[date_key] = data.copy()
-
-                # Recalculate error rates after aggregation
-                for date_key, data in all_results.items():
-                    if data["total_traces"] == 0:
-                        data["error_rate"] = 0.0
-                    else:
-                        data["error_rate"] = round(
-                            (data["zenrows_errors"] / data["total_traces"]) * 100, 1
-                        )
-
-                analysis_results = all_results
+            logger.info("Analyzing zenrows errors from database")
+            analysis_results = await analyzer.analyze_zenrows_errors_from_db(
+                project_name=project_name,
+                report_date=report_date,
+                start_date=start_date,
+                end_date=end_date,
+            )
 
             # Format results as CSV using formatter
             formatter = ReportFormatter()
@@ -309,7 +262,7 @@ async def generate_zenrows_report_from_db(
             await db_manager.close()
 
     except Exception as e:
-        logger.error(f"Database analysis failed: {e}")
+        logger.error(f"Database zenrows analysis failed: {e}")
         # Return empty CSV with header on error
         return "Date,Total Traces,Zenrows Errors,Error Rate\n"
 
@@ -430,7 +383,13 @@ async def generate_zenrows_detail_report_from_db(
 
 @report_app.command("zenrows-errors")
 def zenrows_errors_command(
-    date: str = typer.Option(..., "--date", "-d", help="Date to generate report for (YYYY-MM-DD)"),
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(
+        None, "--start-date", help="Start date for range (YYYY-MM-DD)"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date", help="End date for range (YYYY-MM-DD)"
+    ),
     project: Optional[str] = typer.Option(
         None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
     ),
@@ -446,27 +405,62 @@ def zenrows_errors_command(
       # Single day report for specific project
       lse report zenrows-errors --date 2025-08-29 --project my-project
 
-      # All projects (aggregated)
+      # All projects (aggregated) for single date
       lse report zenrows-errors --date 2025-08-29
+
+      # Date range report for specific project
+      lse report zenrows-errors --start-date 2025-08-29 --end-date 2025-09-05 --project my-project
+
+      # Date range report for all projects
+      lse report zenrows-errors --start-date 2025-08-29 --end-date 2025-09-05
     """
     logger.info("Starting zenrows error report generation")
 
     try:
-        # Parse and validate date parameter
-        report_dt = validate_date(date)
+        # Validate date parameters
+        if date and (start_date or end_date):
+            raise ValidationError(
+                "Cannot specify both single date and date range. Use either --date OR --start-date/--end-date"
+            )
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both --start-date and --end-date required for range analysis")
+
+        if not date and not (start_date and end_date):
+            raise ValidationError(
+                "Either single date (--date) or date range (--start-date/--end-date) required"
+            )
+
+        # Parse and validate dates
         from datetime import timezone
 
-        report_dt = report_dt.replace(tzinfo=timezone.utc)
-        logger.info(f"Generating report for date: {date} (UTC timezone)")
+        report_dt = None
+        start_dt = None
+        end_dt = None
 
-        # Generate report for single date using database
+        if date:
+            report_dt = validate_date(date).replace(tzinfo=timezone.utc)
+            logger.info(f"Generating report for date: {date} (UTC timezone)")
+        else:
+            start_dt = validate_date(start_date).replace(tzinfo=timezone.utc)
+            end_dt = validate_date(end_date).replace(tzinfo=timezone.utc)
+            logger.info(
+                f"Generating report for date range: {start_date} to {end_date} (UTC timezone)"
+            )
+
+        # Generate report using updated database method
         report_output = asyncio.run(
-            generate_zenrows_report_from_db(project_name=project, single_date=report_dt)
+            generate_zenrows_report_from_db(
+                project_name=project,
+                report_date=report_dt,
+                start_date=start_dt,
+                end_date=end_dt,
+            )
         )
 
         # Output CSV to stdout
         typer.echo(report_output)
-        logger.info("Report generation completed successfully")
+        logger.info("Zenrows error report generation completed successfully")
 
     except ValidationError as e:
         logger.error(f"Validation error: {e}")
@@ -474,8 +468,8 @@ def zenrows_errors_command(
         raise typer.Exit(1)
 
     except Exception as e:
-        logger.error(f"Report generation failed: {e}")
-        typer.echo(f"Error: Report generation failed: {e}", err=True)
+        logger.error(f"Zenrows error report generation failed: {e}")
+        typer.echo(f"Error: Zenrows error report generation failed: {e}", err=True)
         raise typer.Exit(1)
 
 
@@ -677,4 +671,142 @@ def is_available_command(
     except Exception as e:
         logger.error(f"Availability report generation failed: {e}")
         typer.echo(f"Error: Availability report generation failed: {e}", err=True)
+        raise typer.Exit(1)
+
+
+async def generate_scraping_insights_report_from_db(
+    project_name: Optional[str] = None,
+    report_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> str:
+    """Generate scraping insights report from database for specified date(s).
+
+    Args:
+        project_name: Project to analyze (optional, defaults to all projects)
+        report_date: Single date to analyze
+        start_date: Start date for range analysis
+        end_date: End date for range analysis
+
+    Returns:
+        CSV formatted report string
+    """
+    try:
+        # Create database manager
+        db_manager = await create_database_manager()
+
+        try:
+            # Initialize database analyzer
+            analyzer = DatabaseTraceAnalyzer(db_manager)
+
+            logger.info("Analyzing scraping insights from database")
+            analysis_results = await analyzer.analyze_scraping_insights_from_db(
+                project_name=project_name,
+                report_date=report_date,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            # Format results as CSV using formatter
+            formatter = ReportFormatter()
+            return formatter.format_scraping_insights_report(analysis_results)
+
+        finally:
+            await db_manager.close()
+
+    except Exception as e:
+        logger.error(f"Database scraping insights analysis failed: {e}")
+        # Return empty CSV with header on error
+        return "date,trace count,zenrows errors count,zenrows errors percentage,is_available false count,is_available false percentage\n"
+
+
+@report_app.command("scraping-insights")
+def scraping_insights_command(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(
+        None, "--start-date", help="Start date for range (YYYY-MM-DD)"
+    ),
+    end_date: Optional[str] = typer.Option(
+        None, "--end-date", help="End date for range (YYYY-MM-DD)"
+    ),
+    project: Optional[str] = typer.Option(
+        None, "--project", "-p", help="Project name to analyze (defaults to all projects)"
+    ),
+) -> None:
+    """
+    Generate unified scraping health reports combining availability and zenrows error metrics.
+
+    Analyzes stored LangSmith trace data to provide comprehensive scraping health insights,
+    combining both website availability failures and zenrows_scraper errors in a single report.
+
+    Examples:
+
+      # Single day unified report for specific project
+      lse report scraping-insights --date 2025-09-01 --project my-project
+
+      # All projects (aggregated) for single date
+      lse report scraping-insights --date 2025-09-01
+
+      # Date range unified report for specific project
+      lse report scraping-insights --start-date 2025-09-01 --end-date 2025-09-07 --project my-project
+
+      # Date range unified report for all projects
+      lse report scraping-insights --start-date 2025-09-01 --end-date 2025-09-07
+    """
+    logger.info("Starting scraping insights report generation")
+
+    try:
+        # Validate date parameters
+        if date and (start_date or end_date):
+            raise ValidationError(
+                "Cannot specify both single date and date range. Use either --date OR --start-date/--end-date"
+            )
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both --start-date and --end-date required for range analysis")
+
+        if not date and not (start_date and end_date):
+            raise ValidationError(
+                "Either single date (--date) or date range (--start-date/--end-date) required"
+            )
+
+        # Parse and validate dates
+        from datetime import timezone
+
+        report_dt = None
+        start_dt = None
+        end_dt = None
+
+        if date:
+            report_dt = validate_date(date).replace(tzinfo=timezone.utc)
+            logger.info(f"Generating unified report for date: {date} (UTC timezone)")
+        else:
+            start_dt = validate_date(start_date).replace(tzinfo=timezone.utc)
+            end_dt = validate_date(end_date).replace(tzinfo=timezone.utc)
+            logger.info(
+                f"Generating unified report for date range: {start_date} to {end_date} (UTC timezone)"
+            )
+
+        # Generate unified report using database
+        report_output = asyncio.run(
+            generate_scraping_insights_report_from_db(
+                project_name=project,
+                report_date=report_dt,
+                start_date=start_dt,
+                end_date=end_dt,
+            )
+        )
+
+        # Output CSV to stdout
+        typer.echo(report_output)
+        logger.info("Scraping insights report generation completed successfully")
+
+    except ValidationError as e:
+        logger.error(f"Validation error: {e}")
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+    except Exception as e:
+        logger.error(f"Scraping insights report generation failed: {e}")
+        typer.echo(f"Error: Scraping insights report generation failed: {e}", err=True)
         raise typer.Exit(1)

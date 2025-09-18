@@ -163,6 +163,50 @@ class ReportFormatter:
         self.logger.debug(f"Generated availability CSV report with {len(lines) - 1} data rows")
         return result
 
+    def format_scraping_insights_report(
+        self, analysis_data: Dict[str, Dict[str, Union[int, float]]]
+    ) -> str:
+        """Format scraping insights analysis data as CSV report.
+
+        Args:
+            analysis_data: Analysis results from DatabaseTraceAnalyzer.analyze_scraping_insights_from_db
+
+        Returns:
+            CSV formatted report string
+        """
+        self.logger.info("Formatting scraping insights report")
+
+        if not analysis_data:
+            self.logger.warning(
+                "No scraping insights analysis data provided, returning empty report"
+            )
+            return "date,trace count,zenrows errors count,zenrows errors percentage,is_available false count,is_available false percentage\n"
+
+        # CSV header for scraping insights report
+        header = "date,trace count,zenrows errors count,zenrows errors percentage,is_available false count,is_available false percentage"
+        lines = [header]
+
+        # Sort dates for consistent output
+        for date_key in sorted(analysis_data.keys()):
+            data = analysis_data[date_key]
+
+            # Format percentages with 1 decimal place (no % symbol to match other reports)
+            zenrows_percentage = f"{data['zenrows_error_percentage']:.1f}"
+            availability_percentage = f"{data['availability_false_percentage']:.1f}"
+
+            # Create CSV row
+            line = (
+                f"{date_key},{data['total_traces']},{data['zenrows_error_count']},{zenrows_percentage},"
+                f"{data['availability_false_count']},{availability_percentage}"
+            )
+            lines.append(line)
+
+        # Join with newlines and add final newline
+        result = "\n".join(lines) + "\n"
+
+        self.logger.debug(f"Generated scraping insights CSV report with {len(lines) - 1} data rows")
+        return result
+
     def format_summary(self, analysis_data: Dict[str, Dict[str, Union[int, float]]]) -> str:
         """Format analysis data as human-readable summary.
 
