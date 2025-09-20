@@ -507,57 +507,98 @@ class TraceExtractor:
     def _meets_filtering_criteria(
         self, run_data: Dict[str, Any], eval_type: Optional[str] = None
     ) -> bool:
-        """Check if a run meets all filtering criteria.
+        """Check if a run meets filtering criteria for dataset inclusion.
 
-        Current criteria (strict for all eval types):
-        1. Must have final verdict feedback
-        2. Output final_decision must match feedback verdict (PASS-PASS or FAIL-FAIL)
-        3. Confidence must be >= 0.7
+        Availability eval_type uses simplified filtering - just needs website_url.
+        Other eval_types use existing strict criteria.
 
         Args:
           run_data: Raw run data
-          eval_type: Evaluation type (currently unused, all types use same strict criteria)
+          eval_type: Evaluation type (affects filtering criteria)
 
         Returns:
-          True if run meets ALL criteria
+          True if run meets criteria for the specified eval_type
         """
-        # 1. Must have final verdict feedback
-        if not self._has_final_verdict_feedback(run_data):
-            return False
+        if eval_type == "availability":
+            # Simplified criteria for availability: just needs website_url
+            return self._has_website_url(run_data)
+        else:
+            # Existing strict criteria for token_name and website eval_types
+            return (
+                self._has_final_verdict_feedback(run_data)
+                and self._has_matching_verdicts(run_data)
+                and self._has_sufficient_confidence(run_data)
+            )
 
-        # 2. Get feedback verdict and output decision
+    def _has_website_url(self, run_data: Dict[str, Any]) -> bool:
+        """Check if run_data contains website_url parameter.
+
+        Args:
+          run_data: Raw run data
+
+        Returns:
+          True if website_url is found in the run data
+        """
+        # Check direct inputs
+        inputs = run_data.get("inputs", {})
+        if "website_url" in inputs:
+            return True
+
+        # Check for nested website_url in various potential locations
+        # Common patterns in due-diligence API requests
+        if isinstance(inputs, dict):
+            # Check nested input structures
+            for key, value in inputs.items():
+                if isinstance(value, dict) and "website_url" in value:
+                    return True
+
+        return False
+
+    def _has_matching_verdicts(self, run_data: Dict[str, Any]) -> bool:
+        """Check if feedback verdict matches output decision.
+
+        Returns:
+          True if verdicts match (PASS-PASS or FAIL-FAIL)
+        """
         feedback_verdict = self._get_feedback_verdict(run_data)
-        final_decision, confidence = self._get_output_decision_and_confidence(run_data)
+        final_decision, _ = self._get_output_decision_and_confidence(run_data)
 
         # Must have both feedback verdict and output decision
         if not feedback_verdict or not final_decision:
             return False
 
         # Must have matching verdicts (PASS-PASS or FAIL-FAIL)
-        if feedback_verdict != final_decision:
-            return False
+        return feedback_verdict == final_decision
 
-        # 3. Must have confidence >= 0.7
-        if confidence is None or confidence < 0.7:
-            return False
+    def _has_sufficient_confidence(self, run_data: Dict[str, Any]) -> bool:
+        """Check if run has sufficient confidence score.
 
-        return True
+        Returns:
+          True if confidence >= 0.7
+        """
+        _, confidence = self._get_output_decision_and_confidence(run_data)
+        return confidence is not None and confidence >= 0.7
 
 
 class DatasetBuilder:
     """Build evaluation datasets from extracted traces."""
 
     def __init__(
-        self, storage: Optional[TraceStorage] = None, database: Optional[DatabaseManager] = None
+        self,
+        storage: Optional[TraceStorage] = None,
+        database: Optional[DatabaseManager] = None,
+        curation_enabled: bool = False,
     ):
         """Initialize the dataset builder.
 
         Args:
           storage: TraceStorage instance for accessing stored traces
           database: DatabaseManager instance for accessing database
+          curation_enabled: Enable dataset curation for optimal 100-example selection
         """
         self.storage = storage or TraceStorage(get_settings())
         self.database = database
+        self.curation_enabled = curation_enabled
 
     def build_dataset(
         self,
@@ -644,8 +685,16 @@ class DatasetBuilder:
                     if example:
                         examples.append(example)
 
+        # Apply curation if enabled
+        if self.curation_enabled and eval_type == "availability":
+            examples = self._curate_dataset(examples, target_size=100)
+            self._print_curation_statistics(examples)
+
         # Create dataset
         dataset_name = f"{project}_{eval_type}_{start_date}_{end_date}"
+        if self.curation_enabled:
+            dataset_name += "_best100"
+
         return EvaluationDataset(
             name=dataset_name,
             description=f"Evaluation dataset for {project} from {start_date} to {end_date}",
@@ -669,23 +718,36 @@ class DatasetBuilder:
             Dataset example or None if trace cannot be processed
         """
         try:
-            # Aggregate inputs, outputs, and reference from all runs
-            all_inputs = {}
-            all_outputs = {}
-            all_reference = {}
+            # Use root run priority extraction for availability eval_type
+            if eval_type == "availability":
+                root_run, child_runs = self._identify_trace_hierarchy(run_data_list)
+                all_inputs, all_outputs, all_reference = self._extract_with_priority(
+                    root_run, child_runs, eval_type
+                )
+            else:
+                # Use existing logic for other eval_types (token_name, website)
+                all_inputs = {}
+                all_outputs = {}
+                all_reference = {}
 
-            for run_data in run_data_list:
-                # Extract inputs (typically from root run only)
-                run_inputs = self._extract_inputs(run_data)
-                self._deep_merge_dict(all_inputs, run_inputs)
+                for run_data in run_data_list:
+                    # Extract inputs (typically from root run only)
+                    run_inputs = self._extract_inputs(run_data)
+                    self._deep_merge_dict(all_inputs, run_inputs)
 
-                # Extract outputs (from all runs, but prioritize final outputs)
-                run_outputs = self._extract_outputs(run_data)
-                self._deep_merge_dict(all_outputs, run_outputs)
+                    # Extract outputs (from all runs, but prioritize final outputs)
+                    run_outputs = self._extract_outputs(run_data)
+                    self._deep_merge_dict(all_outputs, run_outputs)
 
-                # Extract reference data (human feedback, verdicts)
-                run_reference = self._extract_reference(run_data)
-                self._deep_merge_dict(all_reference, run_reference)
+                    # Extract reference data (human feedback, verdicts)
+                    run_reference = self._extract_reference(run_data)
+                    self._deep_merge_dict(all_reference, run_reference)
+
+            # Apply format-specific transformations if needed
+            if eval_type:
+                all_inputs, all_outputs, all_reference = self._apply_format(
+                    all_inputs, all_outputs, all_reference, eval_type
+                )
 
             return DatasetExample(
                 inputs=all_inputs,
@@ -944,15 +1006,101 @@ class DatasetBuilder:
 
         # Website-specific fields - check both analysis and direct fields
         if website_analysis or trace_outputs.get("is_available") is not None:
-            outputs["is_available"] = bool(
-                website_analysis.get("is_available", trace_outputs.get("is_available", True))
+            website_is_available = website_analysis.get("is_available")
+            trace_is_available = trace_outputs.get("is_available")
+            final_is_available = (
+                website_is_available
+                if website_is_available is not None
+                else trace_is_available
+                if trace_is_available is not None
+                else True
             )
+            outputs["is_available"] = bool(final_is_available)
 
             malicious_check = website_analysis.get("malicious_check")
             if isinstance(malicious_check, dict):
                 outputs["is_malicious"] = bool(malicious_check.get("is_dangerous", False))
             else:
                 outputs["is_malicious"] = bool(trace_outputs.get("is_malicious", False))
+
+        # Availability-specific fields (for notes/error messages)
+        self._extract_availability_notes(outputs, website_analysis, trace_outputs)
+
+    def _extract_availability_notes(
+        self, outputs: dict, website_analysis: dict, trace_outputs: dict
+    ):
+        """Extract availability notes/error messages for availability evaluation.
+
+        Note: As of Phase 15, this method operates on root-run-prioritized data,
+        ensuring that availability status and notes reflect the authoritative
+        root run assessment rather than being contaminated by incomplete child runs.
+        """
+        notes = ""
+
+        # Check for availability notes in website_analysis
+        if website_analysis:
+            # Look for error messages or availability notes
+            if "error_message" in website_analysis:
+                notes = website_analysis["error_message"]
+            elif "availability_notes" in website_analysis:
+                notes = website_analysis["availability_notes"]
+            elif "notes" in website_analysis:
+                notes = website_analysis["notes"]
+
+        # Fallback to trace outputs
+        if not notes and trace_outputs:
+            if "error_message" in trace_outputs:
+                notes = trace_outputs["error_message"]
+            elif "availability_notes" in trace_outputs:
+                notes = trace_outputs["availability_notes"]
+            elif "notes" in trace_outputs:
+                notes = trace_outputs["notes"]
+
+        # Generate descriptive notes based on available data and inferred availability
+        if not notes:
+            is_available = outputs.get("is_available", False)
+
+            # Try to infer availability from the presence of scraped data or analysis results
+            has_project_info = bool(trace_outputs.get("project_info"))
+            has_social_links = bool(trace_outputs.get("social_links"))
+            has_page_links = bool(trace_outputs.get("page_links"))
+            has_website_analysis = bool(trace_outputs.get("website_analysis"))
+            has_name_analysis = bool(trace_outputs.get("name_analysis"))
+
+            # Check if this appears to be a successful scraping/analysis result
+            if has_project_info or has_social_links or has_page_links:
+                notes = "Website accessible - content successfully scraped"
+                outputs["is_available"] = True
+            elif has_website_analysis or has_name_analysis:
+                # Don't override is_available - analysis may have determined website is not available
+                # Only set to True if we don't already have a determination
+                if outputs.get("is_available") is None:
+                    notes = "Website accessible - analysis completed successfully"
+                    outputs["is_available"] = True
+                else:
+                    # Use the availability determination from the analysis
+                    if outputs.get("is_available"):
+                        notes = "Website accessible - analysis completed successfully"
+                    else:
+                        notes = "Website not accessible - analysis completed"
+            elif trace_outputs.get("final_decision") == "PASS":
+                notes = "Website accessible - evaluation completed with PASS decision"
+                outputs["is_available"] = True
+            elif trace_outputs.get("final_decision") == "FAIL":
+                notes = "Website accessibility issues - evaluation resulted in FAIL decision"
+                outputs["is_available"] = False
+            elif is_available:
+                notes = "Website appears to be accessible"
+            else:
+                # Check for potential error indicators
+                outputs_str = str(trace_outputs).lower()
+                if "error" in outputs_str or "failed" in outputs_str or "timeout" in outputs_str:
+                    notes = "Website may be unavailable - errors detected during access"
+                    outputs["is_available"] = False
+                else:
+                    notes = "Website availability status unclear"
+
+        outputs["notes"] = str(notes) if notes else ""
 
     def _extract_reference(self, trace_data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract human feedback/reference from trace data."""
@@ -999,6 +1147,8 @@ class DatasetBuilder:
             return self._format_token_name(inputs, outputs, reference)
         elif eval_type == "website":
             return self._format_website(inputs, outputs, reference)
+        elif eval_type == "availability":
+            return self._format_availability(inputs, outputs, reference)
         else:
             # For unknown eval_types, return as-is
             return inputs, outputs, reference
@@ -1075,6 +1225,36 @@ class DatasetBuilder:
 
         return formatted_inputs, formatted_outputs, reference
 
+    def _format_availability(
+        self,
+        inputs: Dict[str, Any],
+        outputs: Dict[str, Any],
+        reference: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        """Format data for availability evaluation type.
+
+        Args:
+          inputs: Clean input data (already extracted by _extract_inputs)
+          outputs: Clean output data (already extracted by _extract_outputs)
+          reference: Reference data
+
+        Returns:
+          Formatted inputs, outputs, and reference for availability evaluation
+        """
+        # Format inputs - extract website_url only
+        formatted_inputs = {"website_url": inputs.get("website_url", "")}
+
+        # Format outputs - boolean availability with notes
+        formatted_outputs = {
+            "is_available": outputs.get("is_available", False),
+            "notes": outputs.get("notes", ""),
+        }
+
+        # Reference data minimal (availability doesn't use complex feedback)
+        formatted_reference = reference
+
+        return formatted_inputs, formatted_outputs, formatted_reference
+
     def _deep_merge_dict(self, target: dict, source: dict) -> None:
         """Deep merge source dictionary into target dictionary.
 
@@ -1087,6 +1267,421 @@ class DatasetBuilder:
                 self._deep_merge_dict(target[key], value)
             else:
                 target[key] = value
+
+    def _identify_trace_hierarchy(
+        self, run_data_list: List[dict]
+    ) -> tuple[Optional[dict], List[dict]]:
+        """Separate root run from child runs in trace processing.
+
+        Args:
+            run_data_list: List of run data from database
+
+        Returns:
+            Tuple of (root_run, child_runs_list)
+        """
+        root_run = None
+        child_runs = []
+
+        for run_data in run_data_list:
+            # Root run is identified when trace_id equals the run's id (not run_id)
+            if run_data.get("trace_id") == run_data.get("id"):
+                if root_run is not None:
+                    console.print(
+                        f"[yellow]Warning: Multiple root runs found in trace {run_data.get('trace_id')}[/yellow]"
+                    )
+                root_run = run_data
+            else:
+                child_runs.append(run_data)
+
+        if root_run is None and run_data_list:
+            # Debug level - common case where traces don't have root runs
+            # Using fallback logic (child runs) is normal and working correctly
+            pass  # Removed noisy warning - fallback behavior is functioning as intended
+
+        return root_run, child_runs
+
+    def _get_critical_fields(self, eval_type: str) -> Dict[str, List[str]]:
+        """Define fields that must maintain root run priority.
+
+        Args:
+            eval_type: Evaluation type (availability, token_name, website)
+
+        Returns:
+            Dictionary mapping field categories to protected field names
+        """
+        if eval_type == "availability":
+            return {
+                "inputs": [],  # No critical input fields for availability
+                "outputs": ["is_available", "notes"],  # These must come from root run
+                "reference": [],
+            }
+        else:
+            # Other eval types use existing logic (no protection)
+            return {"inputs": [], "outputs": [], "reference": []}
+
+    def _merge_with_protection(
+        self, primary_data: dict, supplement_data: dict, protected_fields: List[str]
+    ) -> None:
+        """Merge supplement data into primary without overriding protected fields.
+
+        Args:
+            primary_data: Primary data dictionary (will be modified)
+            supplement_data: Supplement data to merge in
+            protected_fields: List of field names that cannot be overridden
+        """
+        for key, value in supplement_data.items():
+            if key in protected_fields and key in primary_data:
+                # Skip: Root run data takes priority for protected fields
+                continue
+            elif key not in primary_data:
+                # Allow: Fill missing fields from child runs
+                primary_data[key] = value
+            elif key not in protected_fields:
+                # Override non-protected existing fields
+                if isinstance(value, dict) and isinstance(primary_data.get(key), dict):
+                    # Recurse: Deep merge for nested structures (no protection at nested levels)
+                    self._deep_merge_dict(primary_data[key], value)
+                else:
+                    # Override with supplement data
+                    primary_data[key] = value
+
+    def _extract_with_priority(
+        self, root_run: Optional[dict], child_runs: List[dict], eval_type: str
+    ) -> tuple[dict, dict, dict]:
+        """Extract data with root run priority for critical fields.
+
+        Args:
+            root_run: Root run data (trace_id == run_id)
+            child_runs: List of child run data
+            eval_type: Evaluation type for priority rules
+
+        Returns:
+            Tuple of (inputs, outputs, reference) dictionaries
+        """
+
+        # Phase 1: Extract from root run (authoritative)
+        primary_inputs = self._extract_inputs(root_run) if root_run else {}
+        primary_outputs = self._extract_outputs(root_run) if root_run else {}
+        primary_reference = self._extract_reference(root_run) if root_run else {}
+
+        # Phase 2: Supplement with child run data (gap filling only)
+        critical_fields = self._get_critical_fields(eval_type)
+
+        for child_run in child_runs:
+            child_inputs = self._extract_inputs(child_run)
+            child_outputs = self._extract_outputs(child_run)
+            child_reference = self._extract_reference(child_run)
+
+            # Merge with protection for critical fields
+            self._merge_with_protection(
+                primary_inputs, child_inputs, critical_fields.get("inputs", [])
+            )
+            self._merge_with_protection(
+                primary_outputs, child_outputs, critical_fields.get("outputs", [])
+            )
+            self._merge_with_protection(
+                primary_reference, child_reference, critical_fields.get("reference", [])
+            )
+
+        return primary_inputs, primary_outputs, primary_reference
+
+    def _curate_dataset(
+        self, examples: List[DatasetExample], target_size: int = 100
+    ) -> List[DatasetExample]:
+        """Curate dataset to optimal size with representative examples.
+
+        Algorithm:
+        1. Extract ALL negative examples (is_available: false) with URL deduplication
+        2. Select representative positive examples with domain diversity
+        3. Fill remaining slots with highest quality positive examples
+        4. Validate final dataset meets quality requirements
+
+        Args:
+            examples: All available examples
+            target_size: Target dataset size (default 100)
+
+        Returns:
+            Curated list of examples, up to target_size
+        """
+        console.print(
+            f"[blue]Curating dataset: {len(examples)} examples -> up to {target_size} examples[/blue]"
+        )
+
+        # Step 1: Extract all negative examples with deduplication
+        negative_examples = self._extract_negative_examples(examples)
+
+        # Step 2: Select representative positive examples (excluding negative URLs)
+        negative_urls = set(
+            self._normalize_url(self._get_website_url(ex)) for ex in negative_examples
+        )
+        positive_examples = [
+            ex
+            for ex in examples
+            if self._get_is_available(ex)
+            and self._normalize_url(self._get_website_url(ex)) not in negative_urls
+        ]
+
+        remaining_capacity = max(0, target_size - len(negative_examples))
+        selected_positives = self._select_representative_positive_examples(
+            positive_examples, remaining_capacity
+        )
+
+        # Step 3: Combine and validate
+        curated_examples = negative_examples + selected_positives
+        self._validate_curated_dataset(curated_examples)
+
+        return curated_examples
+
+    def _extract_negative_examples(self, examples: List[DatasetExample]) -> List[DatasetExample]:
+        """Extract all negative examples with URL-based deduplication.
+
+        Args:
+            examples: All available examples
+
+        Returns:
+            List of unique negative examples, prioritized by recency
+        """
+        # Filter for negative examples (is_available: false)
+        negative_examples = [ex for ex in examples if not self._get_is_available(ex)]
+
+        console.print(
+            f"[blue]Found {len(negative_examples)} negative examples from {len(examples)} total examples[/blue]"
+        )
+
+        if not negative_examples:
+            return []
+
+        # Group by normalized URL for deduplication
+        url_groups = {}
+        for example in negative_examples:
+            url = self._normalize_url(self._get_website_url(example))
+            if url not in url_groups:
+                url_groups[url] = []
+            url_groups[url].append(example)
+
+        # Select best example from each URL group (prioritize recency)
+        deduplicated = []
+        for url, group in url_groups.items():
+            # Sort by quality and recency (implement prioritization logic)
+            best_example = self._prioritize_by_recency(group)
+            deduplicated.append(best_example)
+
+        console.print(
+            f"[green]Extracted {len(deduplicated)} unique negative examples (deduplicated from {len(negative_examples)})[/green]"
+        )
+        return deduplicated
+
+    def _select_representative_positive_examples(
+        self, positive_examples: List[DatasetExample], capacity: int
+    ) -> List[DatasetExample]:
+        """Select representative positive examples with domain diversity optimization.
+
+        Args:
+            positive_examples: All positive examples
+            capacity: Available slots for positive examples
+
+        Returns:
+            List of selected positive examples up to capacity
+        """
+        if not positive_examples or capacity <= 0:
+            return []
+
+        # First, deduplicate positive examples by normalized URL
+        url_groups = {}
+        for example in positive_examples:
+            normalized_url = self._normalize_url(self._get_website_url(example))
+            if normalized_url not in url_groups:
+                url_groups[normalized_url] = []
+            url_groups[normalized_url].append(example)
+
+        # Select best example from each unique URL
+        deduplicated_positives = []
+        for url, group in url_groups.items():
+            best_example = max(group, key=self._calculate_quality_score)
+            deduplicated_positives.append(best_example)
+
+        console.print(
+            f"[blue]Deduplicated positive examples: {len(deduplicated_positives)} unique URLs from {len(positive_examples)} total[/blue]"
+        )
+
+        # Now group deduplicated examples by domain for diversity optimization
+        domain_groups = {}
+        for example in deduplicated_positives:
+            domain = self._extract_domain(self._get_website_url(example))
+            if domain not in domain_groups:
+                domain_groups[domain] = []
+            domain_groups[domain].append(example)
+
+        # Select best example from each unique domain first
+        selected = []
+        for domain, group in domain_groups.items():
+            if len(selected) >= capacity:
+                break
+            # Select highest quality example from this domain (already deduplicated)
+            best_from_domain = max(group, key=self._calculate_quality_score)
+            selected.append(best_from_domain)
+
+        # Fill remaining slots with highest quality examples from any domain
+        if len(selected) < capacity:
+            remaining_examples = [ex for ex in deduplicated_positives if ex not in selected]
+            remaining_examples.sort(key=self._calculate_quality_score, reverse=True)
+            selected.extend(remaining_examples[: capacity - len(selected)])
+
+        console.print(
+            f"[green]Selected {len(selected)} representative positive examples from {len(domain_groups)} unique domains[/green]"
+        )
+        return selected
+
+    def _validate_curated_dataset(self, examples: List[DatasetExample]) -> None:
+        """Validate curated dataset meets quality requirements.
+
+        Args:
+            examples: Curated examples to validate
+
+        Raises:
+            ValueError: If dataset fails validation
+        """
+        if not examples:
+            raise ValueError("Curated dataset is empty")
+
+        # Check URL uniqueness
+        urls = [self._get_website_url(ex) for ex in examples]
+        normalized_urls = [self._normalize_url(url) for url in urls]
+        if len(normalized_urls) != len(set(normalized_urls)):
+            raise ValueError("Curated dataset contains duplicate URLs")
+
+        # Check data completeness
+        for i, example in enumerate(examples):
+            if not self._get_website_url(example):
+                raise ValueError(f"Example {i} missing website_url")
+            if self._get_is_available(example) is None:
+                raise ValueError(f"Example {i} missing is_available field")
+
+        console.print(
+            f"[green]✓ Curated dataset validation passed: {len(examples)} examples[/green]"
+        )
+
+    def _print_curation_statistics(self, examples: List[DatasetExample]) -> None:
+        """Print detailed curation statistics.
+
+        Args:
+            examples: Curated examples to analyze
+        """
+        if not examples:
+            console.print("[yellow]No examples to analyze[/yellow]")
+            return
+
+        negative_count = len([ex for ex in examples if not self._get_is_available(ex)])
+        positive_count = len(examples) - negative_count
+
+        # Calculate domain diversity for positive examples
+        positive_examples = [ex for ex in examples if self._get_is_available(ex)]
+        domains = set()
+        for example in positive_examples:
+            domain = self._extract_domain(self._get_website_url(example))
+            domains.add(domain)
+
+        console.print("\n[bold blue]Dataset Curation Statistics[/bold blue]")
+        console.print(f"  Total Examples: {len(examples)}")
+        console.print(f"  Negative Examples (is_available: false): {negative_count}")
+        console.print(f"  Positive Examples (is_available: true): {positive_count}")
+        if positive_count > 0:
+            diversity_ratio = len(domains) / positive_count
+            console.print(f"  Unique Domains in Positive Examples: {len(domains)}")
+            console.print(f"  Domain Diversity Ratio: {diversity_ratio:.2f}")
+        console.print()
+
+    # Helper methods for curation
+    def _get_is_available(self, example: DatasetExample) -> Optional[bool]:
+        """Extract is_available value from example."""
+        return example.outputs.get("is_available")
+
+    def _get_website_url(self, example: DatasetExample) -> str:
+        """Extract website_url from example."""
+        return example.inputs.get("website_url", "")
+
+    def _normalize_url(self, url: str) -> str:
+        """Normalize URL for deduplication (remove www, trailing slashes, etc.)."""
+        if not url:
+            return ""
+
+        # Convert to lowercase and remove common prefixes/suffixes
+        normalized = url.lower().strip()
+
+        # Remove protocol
+        if normalized.startswith("https://"):
+            normalized = normalized[8:]
+        elif normalized.startswith("http://"):
+            normalized = normalized[7:]
+
+        # Remove www. prefix
+        if normalized.startswith("www."):
+            normalized = normalized[4:]
+
+        # Remove trailing slash
+        if normalized.endswith("/"):
+            normalized = normalized[:-1]
+
+        return normalized
+
+    def _extract_domain(self, url: str) -> str:
+        """Extract domain from URL for diversity analysis."""
+        from urllib.parse import urlparse
+
+        try:
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+
+            # Check if parsing actually gave us a valid domain
+            if not domain or "." not in domain:
+                return "unknown"
+
+            # Remove port number
+            if ":" in domain:
+                domain = domain.split(":")[0]
+
+            # Remove www. prefix for grouping
+            if domain.startswith("www."):
+                domain = domain[4:]
+
+            return domain or "unknown"
+        except Exception:
+            return "unknown"
+
+    def _prioritize_by_recency(self, examples: List[DatasetExample]) -> DatasetExample:
+        """Select most recent example from a group of duplicates."""
+        # For now, return first example (can be enhanced with timestamp logic)
+        return examples[0]
+
+    def _calculate_quality_score(self, example: DatasetExample) -> float:
+        """Calculate quality score for an example.
+
+        Higher scores indicate better quality examples.
+        """
+        score = 0.0
+
+        # Base score for having required fields
+        if self._get_website_url(example):
+            score += 1.0
+        if self._get_is_available(example) is not None:
+            score += 1.0
+
+        # Bonus for having notes or additional context
+        notes = example.outputs.get("notes", "")
+        if notes and len(notes.strip()) > 10:
+            score += 0.5
+
+        # Bonus for clear success/failure indicators in notes
+        if notes:
+            notes_lower = notes.lower()
+            if any(term in notes_lower for term in ["success", "completed", "found"]):
+                score += 0.3
+            if any(term in notes_lower for term in ["error", "failed", "timeout"]):
+                score += 0.2  # Still valuable as negative examples
+
+        return score
 
 
 class LangSmithUploader:

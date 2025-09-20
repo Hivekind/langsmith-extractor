@@ -406,3 +406,676 @@ class TestLangSmithUploader:
         assert result == "dataset-456"
         # Verify read_dataset was called to check existing dataset
         mock_client.read_dataset.assert_called_once_with(dataset_name="test-dataset")
+
+
+class TestAvailabilityFormatting:
+    """Tests for availability evaluation type formatting."""
+
+    def test_format_availability_basic(self):
+        """Test basic availability formatting."""
+        builder = DatasetBuilder()
+
+        inputs = {"website_url": "https://ethereum.org"}
+        outputs = {"is_available": True, "notes": "Website is accessible"}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._format_availability(
+            inputs, outputs, reference
+        )
+
+        assert formatted_inputs == {"website_url": "https://ethereum.org"}
+        assert formatted_outputs == {"is_available": True, "notes": "Website is accessible"}
+        assert formatted_reference == reference
+
+    def test_format_availability_missing_data(self):
+        """Test availability formatting with missing data."""
+        builder = DatasetBuilder()
+
+        inputs = {}
+        outputs = {}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._format_availability(
+            inputs, outputs, reference
+        )
+
+        assert formatted_inputs == {"website_url": ""}
+        assert formatted_outputs == {"is_available": False, "notes": ""}
+        assert formatted_reference == reference
+
+    def test_apply_format_availability(self):
+        """Test _apply_format dispatches to availability formatter."""
+        builder = DatasetBuilder()
+
+        inputs = {"website_url": "https://test.com"}
+        outputs = {"is_available": False, "notes": "DNS resolution failed"}
+        reference = {}
+
+        formatted_inputs, formatted_outputs, formatted_reference = builder._apply_format(
+            inputs, outputs, reference, "availability"
+        )
+
+        assert formatted_inputs == {"website_url": "https://test.com"}
+        assert formatted_outputs == {"is_available": False, "notes": "DNS resolution failed"}
+        assert formatted_reference == reference
+
+
+class TestRootRunPriority:
+    """Tests for Phase 15 root run priority logic."""
+
+    def test_identify_trace_hierarchy_normal_case(self):
+        """Test normal case: one root run + multiple child runs."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "id": "test-trace-123",  # Root run (trace_id == id)
+                "outputs": {"website_analysis": {"is_available": True}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "id": "child-run-456",  # Child run
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "id": "child-run-789",  # Child run
+                "outputs": {"website_analysis": {"is_available": None}},
+            },
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is not None
+        assert root_run["id"] == "test-trace-123"
+        assert len(child_runs) == 2
+        assert all(run["id"] != "test-trace-123" for run in child_runs)
+
+    def test_identify_trace_hierarchy_no_root_run(self):
+        """Test edge case: no root run (all child runs)."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "id": "child-run-456",  # Child run
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "id": "child-run-789",  # Child run
+                "outputs": {"website_analysis": {"is_available": None}},
+            },
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is None
+        assert len(child_runs) == 2
+
+    def test_identify_trace_hierarchy_single_run(self):
+        """Test edge case: single run trace (root run only)."""
+        builder = DatasetBuilder()
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "id": "test-trace-123",  # Root run (trace_id == id)
+                "outputs": {"website_analysis": {"is_available": True}},
+            }
+        ]
+
+        root_run, child_runs = builder._identify_trace_hierarchy(run_data_list)
+
+        assert root_run is not None
+        assert root_run["id"] == "test-trace-123"
+        assert len(child_runs) == 0
+
+    def test_get_critical_fields_availability(self):
+        """Test critical fields definition for availability eval_type."""
+        builder = DatasetBuilder()
+
+        critical_fields = builder._get_critical_fields("availability")
+
+        assert critical_fields == {
+            "inputs": [],
+            "outputs": ["is_available", "notes"],
+            "reference": [],
+        }
+
+    def test_get_critical_fields_other_eval_types(self):
+        """Test critical fields for non-availability eval_types."""
+        builder = DatasetBuilder()
+
+        for eval_type in ["token_name", "website", "other"]:
+            critical_fields = builder._get_critical_fields(eval_type)
+            assert critical_fields == {"inputs": [], "outputs": [], "reference": []}
+
+    def test_merge_with_protection_protected_fields(self):
+        """Test that protected fields are never overwritten."""
+        builder = DatasetBuilder()
+
+        primary_data = {
+            "is_available": True,  # Protected field
+            "notes": "Root run notes",  # Protected field
+            "other_field": "root value",
+        }
+
+        supplement_data = {
+            "is_available": False,  # Should NOT override
+            "notes": "Child run notes",  # Should NOT override
+            "other_field": "child value",  # Should override
+            "missing_field": "child added",  # Should be added
+        }
+
+        protected_fields = ["is_available", "notes"]
+
+        builder._merge_with_protection(primary_data, supplement_data, protected_fields)
+
+        # Protected fields should maintain root run values
+        assert primary_data["is_available"] is True
+        assert primary_data["notes"] == "Root run notes"
+
+        # Non-protected fields should be overridden
+        assert primary_data["other_field"] == "child value"
+
+        # Missing fields should be added
+        assert primary_data["missing_field"] == "child added"
+
+    def test_merge_with_protection_missing_fields_only(self):
+        """Test child run data supplements missing fields only."""
+        builder = DatasetBuilder()
+
+        primary_data = {"is_available": True, "notes": "Root run notes"}
+
+        supplement_data = {
+            "is_available": False,  # Should NOT override
+            "additional_info": "child data",  # Should be added
+        }
+
+        protected_fields = ["is_available"]
+
+        builder._merge_with_protection(primary_data, supplement_data, protected_fields)
+
+        assert primary_data["is_available"] is True  # Protected
+        assert primary_data["notes"] == "Root run notes"  # Unchanged
+        assert primary_data["additional_info"] == "child data"  # Added
+
+    def test_extract_with_priority_root_run_authority(self):
+        """Test that root run data takes absolute priority for critical fields."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods
+        def mock_extract_inputs(run_data):
+            if not run_data:
+                return {}
+            return {"website_url": run_data.get("inputs", {}).get("website_url", "")}
+
+        def mock_extract_outputs(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("outputs", {})
+
+        def mock_extract_reference(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("reference", {})
+
+        builder._extract_inputs = mock_extract_inputs
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = mock_extract_reference
+
+        root_run = {
+            "trace_id": "test-trace-123",
+            "run_id": "test-trace-123",
+            "inputs": {"website_url": "https://test.com"},
+            "outputs": {"is_available": True, "notes": "Root run analysis"},
+            "reference": {},
+        }
+
+        child_runs = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-456",
+                "outputs": {
+                    "is_available": False,
+                    "notes": "Child run analysis",
+                    "extra_data": "child info",
+                },
+                "reference": {},
+            }
+        ]
+
+        inputs, outputs, reference = builder._extract_with_priority(
+            root_run, child_runs, "availability"
+        )
+
+        # Critical fields should come from root run
+        assert outputs["is_available"] is True  # Root run value
+        assert outputs["notes"] == "Root run analysis"  # Root run value
+
+        # Non-critical fields should be supplemented
+        assert outputs["extra_data"] == "child info"  # Added from child run
+
+    def test_extract_with_priority_no_root_run(self):
+        """Test fallback behavior when no root run exists."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods
+        def mock_extract_outputs(run_data):
+            if not run_data:
+                return {}
+            return run_data.get("outputs", {})
+
+        builder._extract_inputs = lambda x: {} if not x else x.get("inputs", {})
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = lambda x: {} if not x else x.get("reference", {})
+
+        child_runs = [
+            {
+                "outputs": {"is_available": False, "notes": "Child run analysis"},
+            }
+        ]
+
+        inputs, outputs, reference = builder._extract_with_priority(
+            None, child_runs, "availability"
+        )
+
+        # Should get data from child runs since no root run
+        assert outputs["is_available"] is False
+        assert outputs["notes"] == "Child run analysis"
+
+    def test_build_example_from_runs_availability_uses_priority(self):
+        """Test that availability eval_type uses root run priority extraction."""
+        builder = DatasetBuilder()
+
+        # Mock the extract methods and hierarchy identification
+        def mock_identify_hierarchy(run_data_list):
+            root_run = None
+            child_runs = []
+            for run_data in run_data_list:
+                if run_data.get("trace_id") == run_data.get("run_id"):
+                    root_run = run_data
+                else:
+                    child_runs.append(run_data)
+            return root_run, child_runs
+
+        def mock_extract_with_priority(root_run, child_runs, eval_type):
+            if eval_type == "availability":
+                return (
+                    {"website_url": "https://test.com"},
+                    {"is_available": True, "notes": "Root run priority working"},
+                    {},
+                )
+            return {}, {}, {}
+
+        def mock_apply_format(inputs, outputs, reference, eval_type):
+            if eval_type == "availability":
+                return (
+                    {"website_url": inputs.get("website_url", "")},
+                    {
+                        "is_available": outputs.get("is_available", False),
+                        "notes": outputs.get("notes", ""),
+                    },
+                    reference,
+                )
+            return inputs, outputs, reference
+
+        builder._identify_trace_hierarchy = mock_identify_hierarchy
+        builder._extract_with_priority = mock_extract_with_priority
+        builder._apply_format = mock_apply_format
+
+        trace_metadata = TraceMetadata(
+            trace_id="test-trace-123", project="test-project", date="2025-01-01"
+        )
+
+        run_data_list = [
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "test-trace-123",
+                "outputs": {"website_analysis": {"is_available": True}},
+            },
+            {
+                "trace_id": "test-trace-123",
+                "run_id": "child-456",
+                "outputs": {"website_analysis": {"is_available": False}},
+            },
+        ]
+
+        example = builder._build_example_from_runs(trace_metadata, run_data_list, "availability")
+
+        assert example is not None
+        assert example.inputs["website_url"] == "https://test.com"
+        assert example.outputs["is_available"] is True
+        assert example.outputs["notes"] == "Root run priority working"
+
+    def test_build_example_from_runs_other_eval_types_unchanged(self):
+        """Test that non-availability eval_types use existing logic."""
+        builder = DatasetBuilder()
+
+        # Mock existing methods to verify they're called for non-availability types
+        calls_made = []
+
+        def mock_extract_inputs(run_data):
+            calls_made.append(("extract_inputs", run_data.get("run_id")))
+            return {"token_name": "TEST"}
+
+        def mock_extract_outputs(run_data):
+            calls_made.append(("extract_outputs", run_data.get("run_id")))
+            return {"result": "existing_logic"}
+
+        def mock_extract_reference(run_data):
+            calls_made.append(("extract_reference", run_data.get("run_id")))
+            return {}
+
+        def mock_deep_merge_dict(target, source):
+            target.update(source)
+
+        def mock_apply_format(inputs, outputs, reference, eval_type):
+            return inputs, outputs, reference
+
+        builder._extract_inputs = mock_extract_inputs
+        builder._extract_outputs = mock_extract_outputs
+        builder._extract_reference = mock_extract_reference
+        builder._deep_merge_dict = mock_deep_merge_dict
+        builder._apply_format = mock_apply_format
+
+        trace_metadata = TraceMetadata(
+            trace_id="test-trace-123", project="test-project", date="2025-01-01"
+        )
+
+        run_data_list = [
+            {"trace_id": "test-trace-123", "run_id": "run-1"},
+            {"trace_id": "test-trace-123", "run_id": "run-2"},
+        ]
+
+        builder._build_example_from_runs(trace_metadata, run_data_list, "token_name")
+
+        # Verify existing extraction methods were called for each run
+        assert len(calls_made) == 6  # 3 methods × 2 runs
+        assert ("extract_inputs", "run-1") in calls_made
+        assert ("extract_inputs", "run-2") in calls_made
+        assert ("extract_outputs", "run-1") in calls_made
+        assert ("extract_outputs", "run-2") in calls_made
+
+
+class TestDatasetCuration:
+    """Tests for dataset curation functionality."""
+
+    def test_curate_dataset_basic(self):
+        """Test basic dataset curation with mixed positive and negative examples."""
+        builder = DatasetBuilder(curation_enabled=True)
+
+        examples = [
+            # Negative examples (should all be included)
+            DatasetExample(
+                inputs={"website_url": "https://unavailable1.com"},
+                outputs={"is_available": False, "notes": "Site down"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://unavailable2.com"},
+                outputs={"is_available": False, "notes": "DNS error"},
+            ),
+            # Positive examples from different domains (should be selected for diversity)
+            DatasetExample(
+                inputs={"website_url": "https://example.com"},
+                outputs={"is_available": True, "notes": "Working fine"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://google.com"},
+                outputs={"is_available": True, "notes": "Success"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://github.com"},
+                outputs={"is_available": True, "notes": "Available"},
+            ),
+        ]
+
+        curated = builder._curate_dataset(examples, target_size=5)
+
+        # Should include all negative examples plus positive ones
+        assert len(curated) == 5
+        negative_count = len([ex for ex in curated if not ex.outputs.get("is_available")])
+        positive_count = len([ex for ex in curated if ex.outputs.get("is_available")])
+        assert negative_count == 2
+        assert positive_count == 3
+
+    def test_extract_negative_examples_with_deduplication(self):
+        """Test negative example extraction with URL deduplication."""
+        builder = DatasetBuilder()
+
+        examples = [
+            # Duplicate URLs (should be deduplicated)
+            DatasetExample(
+                inputs={"website_url": "https://www.duplicate.com/"},
+                outputs={"is_available": False, "notes": "First"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "http://duplicate.com"},
+                outputs={"is_available": False, "notes": "Second"},  # Should be deduplicated
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://unique.com"},
+                outputs={"is_available": False, "notes": "Unique"},
+            ),
+            # Positive example (should be ignored)
+            DatasetExample(
+                inputs={"website_url": "https://positive.com"},
+                outputs={"is_available": True, "notes": "Available"},
+            ),
+        ]
+
+        negative_examples = builder._extract_negative_examples(examples)
+
+        # Should have 2 unique negative examples (duplicate.com deduplicated)
+        assert len(negative_examples) == 2
+        urls = [builder._get_website_url(ex) for ex in negative_examples]
+        normalized_urls = [builder._normalize_url(url) for url in urls]
+        assert "duplicate.com" in normalized_urls
+        assert "unique.com" in normalized_urls
+
+    def test_select_representative_positive_examples_domain_diversity(self):
+        """Test positive example selection with domain diversity optimization."""
+        builder = DatasetBuilder()
+
+        positive_examples = [
+            # Multiple examples from same domain
+            DatasetExample(
+                inputs={"website_url": "https://example.com/page1"},
+                outputs={"is_available": True, "notes": "Page 1 - quality score 2.5"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://example.com/page2"},
+                outputs={
+                    "is_available": True,
+                    "notes": "Page 2 success completed found - quality score 3.3",
+                },  # Higher quality
+            ),
+            # Different domains
+            DatasetExample(
+                inputs={"website_url": "https://google.com"},
+                outputs={"is_available": True, "notes": "Google works"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://github.com"},
+                outputs={"is_available": True, "notes": "GitHub available"},
+            ),
+        ]
+
+        selected = builder._select_representative_positive_examples(positive_examples, capacity=3)
+
+        # Should select best from each domain (3 unique domains, capacity allows all)
+        assert len(selected) == 3
+        domains = [builder._extract_domain(builder._get_website_url(ex)) for ex in selected]
+        assert "example.com" in domains
+        assert "google.com" in domains
+        assert "github.com" in domains
+
+        # Should select higher quality example from example.com domain
+        example_com_selected = [
+            ex for ex in selected if "example.com" in builder._get_website_url(ex)
+        ][0]
+        assert "Page 2" in example_com_selected.outputs["notes"]  # Higher quality one
+
+    def test_validate_curated_dataset_success(self):
+        """Test dataset validation with valid curated examples."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": "https://example.com"},
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "https://different.com"},
+                outputs={"is_available": False, "notes": "Down"},
+            ),
+        ]
+
+        # Should not raise any exception
+        builder._validate_curated_dataset(examples)
+
+    def test_validate_curated_dataset_duplicate_urls(self):
+        """Test dataset validation fails with duplicate URLs."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": "https://www.example.com/"},
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+            DatasetExample(
+                inputs={"website_url": "http://example.com"},  # Duplicate after normalization
+                outputs={"is_available": False, "notes": "Down"},
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="duplicate URLs"):
+            builder._validate_curated_dataset(examples)
+
+    def test_validate_curated_dataset_missing_fields(self):
+        """Test dataset validation fails with missing required fields."""
+        builder = DatasetBuilder()
+
+        examples = [
+            DatasetExample(
+                inputs={"website_url": ""},  # Missing URL
+                outputs={"is_available": True, "notes": "Working"},
+            ),
+        ]
+
+        with pytest.raises(ValueError, match="missing website_url"):
+            builder._validate_curated_dataset(examples)
+
+    def test_normalize_url(self):
+        """Test URL normalization for deduplication."""
+        builder = DatasetBuilder()
+
+        # Test various URL formats that should normalize to same value
+        test_cases = [
+            "https://www.example.com/",
+            "http://www.example.com",
+            "https://example.com/",
+            "http://example.com",
+            "HTTPS://WWW.EXAMPLE.COM/",
+        ]
+
+        normalized_urls = [builder._normalize_url(url) for url in test_cases]
+
+        # All should normalize to the same value
+        assert len(set(normalized_urls)) == 1
+        assert normalized_urls[0] == "example.com"
+
+    def test_extract_domain(self):
+        """Test domain extraction for diversity analysis."""
+        builder = DatasetBuilder()
+
+        test_cases = [
+            ("https://www.example.com/page", "example.com"),
+            ("http://subdomain.test.org", "subdomain.test.org"),
+            ("github.com/user/repo", "github.com"),  # No protocol
+            ("https://site.com:3000", "site.com"),  # Port number removed
+            ("invalid-url", "unknown"),
+        ]
+
+        for url, expected_domain in test_cases:
+            assert builder._extract_domain(url) == expected_domain
+
+    def test_calculate_quality_score(self):
+        """Test quality scoring system for positive examples."""
+        builder = DatasetBuilder()
+
+        # High quality example (has URL, is_available, good notes with success indicators)
+        high_quality = DatasetExample(
+            inputs={"website_url": "https://example.com"},
+            outputs={
+                "is_available": True,
+                "notes": "Website working perfectly, found all content successfully",
+            },
+        )
+
+        # Medium quality example (basic fields, shorter notes)
+        medium_quality = DatasetExample(
+            inputs={"website_url": "https://test.com"},
+            outputs={"is_available": True, "notes": "Working"},
+        )
+
+        # Low quality example (missing URL)
+        low_quality = DatasetExample(
+            inputs={"website_url": ""}, outputs={"is_available": True, "notes": ""}
+        )
+
+        high_score = builder._calculate_quality_score(high_quality)
+        medium_score = builder._calculate_quality_score(medium_quality)
+        low_score = builder._calculate_quality_score(low_quality)
+
+        assert high_score > medium_score > low_score
+        assert high_score >= 2.8  # Base (2.0) + notes (0.5) + success indicators (0.3)
+        assert medium_score >= 2.0  # Base fields only
+        assert low_score <= 1.0  # Missing URL
+
+    def test_curation_integration_with_constructor(self):
+        """Test that curation_enabled flag is properly stored and used."""
+        builder_with_curation = DatasetBuilder(curation_enabled=True)
+        builder_without_curation = DatasetBuilder(curation_enabled=False)
+
+        assert builder_with_curation.curation_enabled is True
+        assert builder_without_curation.curation_enabled is False
+
+        # Test default value
+        builder_default = DatasetBuilder()
+        assert builder_default.curation_enabled is False
+
+    def test_curate_dataset_target_size_limit(self):
+        """Test that curation respects target size limits."""
+        builder = DatasetBuilder(curation_enabled=True)
+
+        # Create many examples, more than target size
+        examples = []
+        # Add 5 negative examples
+        for i in range(5):
+            examples.append(
+                DatasetExample(
+                    inputs={"website_url": f"https://negative{i}.com"},
+                    outputs={"is_available": False, "notes": f"Down {i}"},
+                )
+            )
+
+        # Add 10 positive examples from different domains
+        for i in range(10):
+            examples.append(
+                DatasetExample(
+                    inputs={"website_url": f"https://positive{i}.com"},
+                    outputs={"is_available": True, "notes": f"Working {i}"},
+                )
+            )
+
+        curated = builder._curate_dataset(examples, target_size=8)
+
+        # Should have at most 8 examples: 5 negatives + 3 best positives
+        assert len(curated) == 8
+        negative_count = len([ex for ex in curated if not ex.outputs.get("is_available")])
+        positive_count = len([ex for ex in curated if ex.outputs.get("is_available")])
+        assert negative_count == 5  # All negative examples included
+        assert positive_count == 3  # Only 3 positive examples fit

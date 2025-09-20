@@ -26,7 +26,10 @@ def create_dataset(
         ..., "--project", help="Project name to create dataset from", show_default=False
     ),
     eval_type: str = typer.Option(
-        ..., "--eval-type", help="Evaluation type: 'token_name' or 'website'", show_default=False
+        ...,
+        "--eval-type",
+        help="Evaluation type: 'token_name', 'website', or 'availability'",
+        show_default=False,
     ),
     date: Optional[str] = typer.Option(
         None, "--date", help="Single date in YYYY-MM-DD format (UTC)"
@@ -41,6 +44,11 @@ def create_dataset(
     name: Optional[str] = typer.Option(
         None, "--name", help="Dataset name (auto-generated if not provided)"
     ),
+    best_100: bool = typer.Option(
+        False,
+        "--best-100",
+        help="Create curated 100-example dataset with optimal representation (availability eval_type only)",
+    ),
 ):
     """Create evaluation dataset directly from database with date range support.
 
@@ -49,16 +57,31 @@ def create_dataset(
 
     Examples:
       # Single date
-      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type accuracy
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type token_name
 
       # Date range
-      lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type accuracy
+      lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type website
+
+      # Availability evaluation
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability
+
+      # Curated 100-example availability dataset (availability only)
+      lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability --best-100
     """
     # Validate eval_type parameter
-    if eval_type not in ["token_name", "website"]:
+    if eval_type not in ["token_name", "website", "availability"]:
         console.print(
-            f"[red]Error: --eval-type must be either 'token_name' or 'website', got '{eval_type}'[/red]"
+            f"[red]Error: --eval-type must be 'token_name', 'website', or 'availability', got '{eval_type}'[/red]"
         )
+        raise typer.Exit(1)
+
+    # Validate --best-100 parameter (CRITICAL CONSTRAINT: availability only)
+    if best_100 and eval_type != "availability":
+        console.print(
+            "[red]Error: --best-100 parameter is only allowed with --eval-type availability[/red]"
+        )
+        console.print(f"[yellow]  Current eval_type: {eval_type}[/yellow]")
+        console.print("[cyan]  Suggestion: Use '--eval-type availability' with --best-100[/cyan]")
         raise typer.Exit(1)
 
     # Validate date parameters
@@ -84,7 +107,7 @@ def create_dataset(
         db_manager = await create_database_manager()
 
         try:
-            builder = DatasetBuilder(database=db_manager)
+            builder = DatasetBuilder(database=db_manager, curation_enabled=best_100)
 
             with Progress(
                 SpinnerColumn(),
@@ -118,6 +141,9 @@ def create_dataset(
     with open(output_path, "w") as f:
         for example in dataset.examples:
             simplified_example = {"inputs": example.inputs, "outputs": example.outputs}
+            # Include metadata if available (contains trace_id, project, date)
+            if example.metadata:
+                simplified_example["metadata"] = example.metadata
             json.dump(simplified_example, f, separators=(",", ":"))
             f.write("\n")
 

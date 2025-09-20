@@ -17,6 +17,8 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [Phase 11: Reporting Database Migration](#phase-11-reporting-database-migration-) ✅ **COMPLETED**
 - [**Phase 12: Critical Feedback Data Loss Fix**](#phase-12-critical-feedback-data-loss-fix--urgent) 🚨 **URGENT**
 - [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
+- [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) ✅ **COMPLETED**
+- [**Phase 16: Availability Dataset Curation (Best 100)**](#phase-16-availability-dataset-curation-best-100-) 🎯 **NEXT**
 
 ---
 
@@ -35,6 +37,9 @@ LangSmith Extractor enables teams to extract, analyze, and archive LangSmith tra
 ### 🚨 Critical Issues
 - **Phase 12**: **Critical feedback data loss** - detailed feedback rationale missing from extraction
 - **Phase 13**: **Dataset format generation** - eval create-dataset producing wrong output format
+
+### 🎯 Next Priority
+- **Phase 16**: **Availability dataset curation** - implement --best-100 feature for curated representative datasets
 
 ---
 
@@ -934,6 +939,123 @@ lse archive full-sweep --project my-project --date 2025-09-06
 3. **Business Impact**: Generated datasets cannot be used for evaluation workflows as they don't match expected format
 4. **Test Coverage Gap**: No tests validating output format compliance
 
+## Phase 14: Availability Evaluation Type 🔄 **PLANNED**
+
+**Goal:** Add support for "availability" evaluation type to create datasets for URL availability checking  
+**Success Criteria:** `lse eval create-dataset --eval-type availability` creates properly formatted datasets with website_url inputs and is_available outputs
+
+### Problem Statement
+Need to expand evaluation capabilities to support URL availability checking:
+
+1. **New Evaluation Type**: Add "availability" as a supported eval_type alongside existing "token_name" and "website" types
+2. **Simplified Dataset Creation**: Create entries for every trace over the date range (not just "high confidence" traces like token_name and website)
+3. **URL Focus**: Extract website_url from trace inputs and availability status from outputs
+4. **Business Value**: Enable automated evaluation of website availability across due diligence workflows
+
+### Features
+
+- [ ] **Availability eval_type support** - Add "availability" to supported eval_type options `M`
+- [ ] **All-trace inclusion logic** - Create entries for every trace (no high-confidence filtering) `M`
+- [ ] **URL extraction** - Extract website_url from /due-diligence API request parameters `M`
+- [ ] **Availability output format** - Format outputs with is_available boolean and notes field `M`
+- [ ] **Command interface integration** - Seamless integration with existing eval create-dataset command `S`
+- [ ] **Validation and testing** - Comprehensive test coverage for new eval_type `S`
+- [ ] **Documentation updates** - Update help text and examples `S`
+
+### Expected Dataset Format
+
+**Availability Evaluation Examples**:
+```json
+{
+  "examples": [
+    {
+      "inputs": {
+        "website_url": "https://ethereum.org"
+      },
+      "outputs": {
+        "is_available": true,
+        "notes": "Official Ethereum website - should always be accessible"
+      }
+    },
+    {
+      "inputs": {
+        "website_url": "https://nonexistent-crypto-site-xyz123.com"
+      },
+      "outputs": {
+        "is_available": false,
+        "notes": "Non-existent domain - should fail DNS resolution"
+      }
+    }
+  ]
+}
+```
+
+### Command Interface (Enhanced)
+
+```bash
+# Create availability evaluation dataset
+lse eval create-dataset --project my-project --date 2025-01-15 --eval-type availability
+
+# Date range support for availability
+lse eval create-dataset --project my-project --start-date 2025-01-01 --end-date 2025-01-15 --eval-type availability
+
+# Upload and run availability evaluation
+lse eval upload --dataset availability_dataset.json --name availability_eval_2025_01
+lse eval run --dataset-name availability_eval_2025_01 --experiment-prefix avail_check --eval-type availability
+```
+
+### Technical Implementation
+
+#### Data Extraction Logic
+- **Input Extraction**: Extract `website_url` parameter from `/due-diligence` API request data
+- **Output Extraction**: Determine availability status from API response or error patterns
+- **No High-Confidence Filtering**: Include all traces that contain website_url, regardless of confidence scores
+- **Notes Generation**: Provide descriptive notes about availability status or failure reasons
+
+#### Integration Points
+- **Existing eval_type validation**: Update to include "availability" as valid option
+- **Format method**: Add `_format_availability()` method alongside existing format methods
+- **Database queries**: Reuse existing trace extraction with availability-specific filtering
+- **Command help**: Update CLI help text to include availability in examples
+
+### Quality Gates
+
+#### Phase 14.1 Completion Criteria
+- [ ] "availability" eval_type accepted by CLI validation
+- [ ] All traces with website_url parameter included in dataset creation
+- [ ] Basic availability status extraction working
+- [ ] Format validation tests pass for availability datasets
+
+#### Phase 14.2 Completion Criteria
+- [ ] Complete availability dataset format matches specification exactly
+- [ ] Notes field provides meaningful availability context
+- [ ] Integration with existing upload and run commands working
+- [ ] Test coverage exceeds 95% for availability-specific code
+
+#### Phase 14.3 Completion Criteria
+- [ ] Documentation updated with availability examples
+- [ ] Help text includes availability in eval_type options
+- [ ] End-to-end workflow validated from dataset creation to external API
+- [ ] Performance maintains current standards
+
+### Dependencies
+- Phase 10 (Evaluation Database Migration) completed ✅
+- Phase 13 (Dataset Format Fix) completion recommended for consistency
+- Database populated with traces containing website_url parameters
+- External evaluation API supports availability eval_type
+
+### Risk Assessment
+
+#### Technical Risks
+- **Data Structure Variance**: website_url may be nested differently across trace types
+- **Availability Detection**: Complex logic needed to determine availability from various response patterns
+- **Performance Impact**: Processing all traces (no filtering) may increase dataset creation time
+
+#### Mitigation Strategies
+- **Flexible Extraction**: Implement robust website_url extraction from multiple potential locations
+- **Pattern Recognition**: Define clear availability detection rules based on response codes and error patterns
+- **Batching**: Use existing database batching for efficient processing of larger trace volumes
+
 ### Current vs Expected Format Analysis
 
 #### Current (Incorrect) Format
@@ -1116,6 +1238,400 @@ lse eval create-dataset --project my-project --date 2025-01-15 --eval-type websi
 - **Test Coverage**: >95% coverage with dedicated format validation tests  
 - **Performance**: Dataset generation maintains current performance levels
 - **Compatibility**: Generated datasets work correctly with existing LangSmith upload workflow
+
+## Phase 15: Availability Dataset Root Run Priority Bug 🚨 **URGENT**
+
+**Goal:** Fix availability dataset creation to prioritize root run data over child run data  
+**Success Criteria:** Availability datasets accurately reflect root run's `is_available` status without contamination from incomplete child runs
+
+### 🚨 Critical Problem Statement
+**Data Accuracy Issue Identified**: The availability dataset creation produces incorrect availability status due to child run contamination:
+
+1. **Root Run Data Ignored**: Root runs (where `trace_id == run_id`) contain authoritative availability status
+2. **Child Run Contamination**: Child runs with incomplete or missing `is_available` data override correct root run values
+3. **Data Aggregation Flaw**: `_deep_merge_dict()` allows later child runs to overwrite correct root run data
+4. **Business Impact**: Datasets contain incorrect availability status, making them unreliable for evaluation workflows
+5. **Scope**: Affects all availability datasets created since Phase 14 implementation
+
+### Problem Evidence
+
+**Database Evidence**: 
+- Root run (`49751c71-4b79-469e-90cb-b83241e3afa1`): `is_available: true` ✅
+- Child runs: Some have `is_available: null/undefined` ❌
+- Generated dataset: `is_available: false` ❌ **WRONG**
+
+**Expected vs Actual**:
+```json
+// Expected (from root run)
+{"inputs": {"website_url": "https://x.com/FooExample"}, "outputs": {"is_available": true}}
+
+// Actual (contaminated by child runs)  
+{"inputs": {"website_url": "https://x.com/FooExample"}, "outputs": {"is_available": false}}
+```
+
+### Solution Design
+
+#### Core Fix: Root Run Prioritization
+**Priority Order for Data Extraction**:
+1. **Root Run First**: Extract data from run where `trace_id == run_id`
+2. **Child Run Fallback**: Only use child runs if root run lacks specific fields
+3. **Never Override**: Child runs cannot override root run's authoritative data
+
+#### Implementation Strategy
+
+**Phase 15.1: Root Run Identification** `M`
+- Modify `_build_example_from_runs()` to identify root run (`trace_id == run_id`)
+- Extract root run data with highest priority
+- Create separate extraction paths for root vs child runs
+
+**Phase 15.2: Hierarchical Data Extraction** `M`  
+- Update `_extract_outputs()` to prioritize root run availability data
+- Implement fallback logic that only uses child runs for missing fields
+- Ensure `is_available` status always comes from root run when available
+
+**Phase 15.3: Deep Merge Logic Fix** `M`
+- Modify data aggregation to prevent child run override of root run data
+- Implement priority-based merging instead of sequential overwriting
+- Add validation to ensure critical fields maintain root run values
+
+**Phase 15.4: Availability-Specific Logic** `M`
+- Update `_extract_availability_notes()` to use root run data for availability inference
+- Ensure availability status determination follows root run → child run priority
+- Add logging to track which run data is being used for availability decisions
+
+### Technical Implementation
+
+#### File Modifications Required
+
+**Core Implementation**:
+```python
+# /lse/evaluation.py - _build_example_from_runs() method
+def _build_example_from_runs(self, trace_metadata, run_data_list, eval_type=None):
+    # 1. Identify root run (where trace_id == run_id)
+    root_run = None
+    child_runs = []
+    
+    for run_data in run_data_list:
+        if run_data.get('trace_id') == run_data.get('run_id'):
+            root_run = run_data
+        else:
+            child_runs.append(run_data)
+    
+    # 2. Extract data with root run priority
+    if eval_type == "availability":
+        # Use root-run-priority extraction for availability
+        all_inputs, all_outputs, all_reference = self._extract_with_priority(
+            root_run, child_runs, eval_type
+        )
+    else:
+        # Use existing logic for other eval types
+        # ... existing code ...
+```
+
+#### Root Run Priority Extraction Logic
+```python
+def _extract_with_priority(self, root_run, child_runs, eval_type):
+    """Extract data with root run taking priority over child runs."""
+    
+    # Start with root run data
+    primary_inputs = self._extract_inputs(root_run) if root_run else {}
+    primary_outputs = self._extract_outputs(root_run) if root_run else {}
+    primary_reference = self._extract_reference(root_run) if root_run else {}
+    
+    # Fill gaps with child run data (but never override root run critical fields)
+    for child_run in child_runs:
+        child_inputs = self._extract_inputs(child_run)
+        child_outputs = self._extract_outputs(child_run)
+        child_reference = self._extract_reference(child_run)
+        
+        # Merge inputs (child can fill missing fields)
+        self._merge_with_priority(primary_inputs, child_inputs, priority_fields=[])
+        
+        # Merge outputs (root run availability data has priority)
+        priority_fields = ["is_available", "notes"] if eval_type == "availability" else []
+        self._merge_with_priority(primary_outputs, child_outputs, priority_fields)
+        
+        # Merge reference (child can fill missing fields)
+        self._merge_with_priority(primary_reference, child_reference, priority_fields=[])
+    
+    return primary_inputs, primary_outputs, primary_reference
+```
+
+### Quality Gates
+
+#### Phase 15.1 Completion Criteria
+- [ ] Root run identification works correctly for all traces
+- [ ] Root run vs child run separation logic implemented and tested
+- [ ] Database queries correctly identify trace hierarchies
+
+#### Phase 15.2 Completion Criteria
+- [ ] Root run data extraction prioritizes authoritative availability status
+- [ ] Child run fallback logic works for missing fields only
+- [ ] Availability status never overridden by incomplete child run data
+
+#### Phase 15.3 Completion Criteria  
+- [ ] Data merging respects root run priority for critical fields
+- [ ] Child runs can only supplement, not override, root run data
+- [ ] Availability datasets show correct root run `is_available` status
+
+#### Phase 15.4 Completion Criteria
+- [ ] All availability-specific logic uses root run priority
+- [ ] Notes generation reflects root run availability status
+- [ ] End-to-end testing validates fix with problematic trace examples
+
+### Test Cases
+
+#### Critical Test Case (Foo Example)
+```python
+def test_foo_availability_fix():
+    """Test that Foo trace shows correct availability from root run."""
+    trace_id = "49751c71-4b79-469e-90cb-b83241e3afa1"
+    
+    # This should return is_available: true (from root run)
+    # NOT is_available: false (from child run contamination)
+    dataset = create_dataset_for_trace(trace_id, eval_type="availability")
+    
+    foo_example = find_example_by_url(dataset, "https://x.com/FooExample")
+    assert foo_example["outputs"]["is_available"] == True
+```
+
+#### Regression Tests
+- [ ] Test traces with complete root run data
+- [ ] Test traces with incomplete child run data
+- [ ] Test traces with conflicting availability status between runs
+- [ ] Test traces with missing root run data (fallback scenarios)
+
+### Risk Assessment
+
+#### Critical Risks
+- **Data Integrity**: Fix must not corrupt non-availability eval types
+- **Performance Impact**: Root run identification might slow dataset creation
+- **Edge Cases**: Complex trace hierarchies might have unexpected structures
+- **Regression**: Changes could affect token_name and website eval types
+
+#### Mitigation Strategies
+- **Selective Application**: Apply root run priority only to availability eval_type
+- **Comprehensive Testing**: Test all eval_types to prevent regressions
+- **Performance Monitoring**: Benchmark dataset creation times before/after fix
+- **Gradual Rollout**: Test fix on small datasets before full deployment
+
+### Success Metrics
+- **Data Accuracy**: 100% of availability datasets reflect correct root run status
+- **No Regressions**: Other eval_types maintain current functionality
+- **Test Coverage**: >95% coverage for root run priority logic
+- **Performance**: Dataset creation time impact <10%
+
+### Dependencies
+- Phase 14 (Availability Evaluation Type) completed ✅
+- Access to problematic trace examples for testing ✅
+- Database with trace hierarchy data available ✅
+
+## Phase 16: Availability Dataset Curation (Best 100) 🎯 **NEXT**
+
+**Goal:** Implement intelligent dataset curation for availability evaluation with --best-100 parameter  
+**Success Criteria:** Create optimally balanced 100-example availability datasets with comprehensive negative case coverage and representative positive examples
+
+### Feature Overview
+Add `--best-100` parameter to `lse eval create-dataset --eval-type availability` command to generate curated, high-quality datasets optimized for availability evaluation testing.
+
+**⚠️ Important Constraint**: The `--best-100` parameter is **ONLY supported for `--eval-type availability`**. It will not work with `token_name` or `website` eval types and will show an error if attempted.
+
+### Technical Requirements
+
+#### Phase 16.1: Dataset Curation Framework `M`
+**Objective**: Implement core dataset curation logic with configurable size limits
+
+**Key Features:**
+- Add `--best-100` CLI parameter to availability dataset creation
+- Implement intelligent example selection algorithm
+- Ensure comprehensive negative case coverage
+- Optimize positive case representation with domain diversity
+
+**Implementation Details:**
+```python
+def create_curated_dataset(self, traces: List[TraceMetadata], target_size: int = 100) -> EvaluationDataset:
+    """Create curated dataset with optimal example distribution."""
+    negative_examples = self._extract_negative_examples(traces)
+    positive_examples = self._select_representative_positive_examples(
+        traces, remaining_slots=target_size - len(negative_examples)
+    )
+    return self._build_curated_dataset(negative_examples + positive_examples)
+```
+
+#### Phase 16.2: Negative Case Prioritization `M`
+**Objective**: Ensure all false availability cases are captured with deduplication
+
+**Requirements:**
+- **Complete Coverage**: Include ALL traces with `is_available: false`
+- **URL Uniqueness**: Deduplicate by website_url for negative cases
+- **Priority Ordering**: Most recent examples preferred when deduplicating
+- **Validation**: Ensure no false negatives are missed
+
+**Algorithm Design:**
+1. Extract all examples with `is_available: false` from date range
+2. Deduplicate by website_url (keeping most recent)
+3. Validate negative examples meet quality criteria
+4. Add all unique negative examples to curated dataset
+
+#### Phase 16.3: Positive Case Optimization `M` 
+**Objective**: Select representative positive examples with domain diversity
+
+**Strategy:**
+- **Domain Diversity**: Prefer unique domains/subdomains for variety
+- **URL Uniqueness**: No duplicate website_urls across entire dataset
+- **Quality Scoring**: Prioritize examples with comprehensive data
+- **Balanced Representation**: Cover different types of positive availability
+
+**Selection Algorithm:**
+1. Group positive examples by domain
+2. Select best example from each domain (quality scoring)
+3. Fill remaining slots with high-quality examples from any domain
+4. Ensure final dataset reaches target size (100 examples)
+
+#### Phase 16.4: Quality Validation `M`
+**Objective**: Validate curated dataset meets quality and balance requirements
+
+**Validation Criteria:**
+- **Size Compliance**: Exactly 100 examples (or justify if fewer)
+- **Negative Coverage**: All available false cases included
+- **URL Uniqueness**: No duplicate website_urls across dataset
+- **Domain Diversity**: Reasonable domain distribution for positive cases
+- **Data Completeness**: All examples have required fields (website_url, is_available, notes)
+
+### CLI Integration
+
+#### New Parameter
+```bash
+# ✅ VALID: --best-100 with availability eval_type
+lse eval create-dataset --project my-project --eval-type availability --date 2025-09-10 --best-100 --output curated_100.jsonl --name curated_availability
+
+# ❌ INVALID: --best-100 with other eval_types (will show error)
+lse eval create-dataset --project my-project --eval-type token_name --date 2025-09-10 --best-100 --output error.jsonl --name error
+lse eval create-dataset --project my-project --eval-type website --date 2025-09-10 --best-100 --output error.jsonl --name error
+```
+
+#### Behavior Changes
+- **Default Mode**: Without `--best-100`, maintain existing behavior (all examples)
+- **Curated Mode**: With `--best-100`, enable intelligent curation to ~100 examples
+- **Validation**: Warn if fewer than 100 examples available from date range
+- **Reporting**: Show curation statistics (negative count, positive count, domains covered)
+
+### Expected Output Format
+
+#### Example Output Statistics
+```
+✓ Created curated dataset 'curated_availability' with 97 examples
+  - Negative examples (is_available: false): 12 unique URLs
+  - Positive examples (is_available: true): 85 examples across 67 domains  
+  - Total examples: 97 (limited by available data)
+  - Saved to: curated_100.jsonl
+```
+
+#### Dataset Quality Metrics
+- **Negative Coverage**: 100% of false availability cases included
+- **URL Uniqueness**: 0 duplicate URLs in dataset
+- **Domain Diversity**: 60+ unique domains represented
+- **Representative Distribution**: Balanced mix of website types and availability patterns
+
+### Implementation Plan
+
+#### Phase 16.1: Core Curation Framework `M`
+**Deliverables:**
+- [ ] Add `--best-100` CLI parameter with typer integration
+- [ ] Implement `create_curated_dataset()` method in DatasetBuilder
+- [ ] Add curation logic to `create_dataset_from_db()` workflow
+- [ ] Create base curation infrastructure and interfaces
+
+**Acceptance Criteria:**
+- CLI parameter parsed and passed to dataset creation logic
+- Curation framework integrated with existing availability dataset creation
+- Code structure supports configurable target sizes (not hardcoded to 100)
+
+#### Phase 16.2: Negative Case Collection `M`
+**Deliverables:**
+- [ ] Implement `_extract_negative_examples()` with deduplication
+- [ ] Add URL uniqueness validation for negative cases
+- [ ] Create comprehensive negative case coverage logic
+- [ ] Add logging for negative case statistics
+
+**Acceptance Criteria:**
+- All `is_available: false` examples captured from date range
+- URL deduplication working correctly (most recent preferred)
+- No false negative examples missed or excluded
+
+#### Phase 16.3: Positive Case Selection `M`
+**Deliverables:**
+- [ ] Implement `_select_representative_positive_examples()` method
+- [ ] Add domain diversity optimization algorithm
+- [ ] Create quality scoring system for positive examples
+- [ ] Implement slot-filling logic for remaining capacity
+
+**Acceptance Criteria:**
+- Domain diversity maximized for positive examples
+- Quality scoring prioritizes examples with complete data
+- Target dataset size reached when sufficient data available
+
+#### Phase 16.4: Quality Assurance `M`
+**Deliverables:**
+- [ ] Add dataset validation for size, uniqueness, and completeness
+- [ ] Implement curation statistics reporting
+- [ ] Create comprehensive test suite for all curation logic
+- [ ] Add edge case handling for insufficient data scenarios
+
+**Acceptance Criteria:**
+- Dataset validation catches quality issues before output
+- Statistics provide clear insight into curation results
+- Edge cases handled gracefully (warn but don't fail)
+
+### Testing Strategy
+
+#### Unit Tests
+- **Negative Case Extraction**: Test with various false availability scenarios
+- **Deduplication Logic**: Verify URL uniqueness and recency preference
+- **Positive Case Selection**: Test domain diversity and quality scoring
+- **Dataset Validation**: Test size limits, uniqueness, and completeness
+
+#### Integration Tests  
+- **End-to-End Curation**: Full workflow from database to curated JSONL output
+- **CLI Integration**: Test `--best-100` parameter with various date ranges
+- **Quality Validation**: Verify curated datasets meet all quality criteria
+- **Statistics Reporting**: Test curation statistics accuracy
+
+#### Edge Case Tests
+- **Insufficient Data**: Test behavior when <100 examples available
+- **All Positive/Negative**: Test extreme distributions
+- **Duplicate URLs**: Test deduplication across positive and negative cases
+- **Domain Concentration**: Test when few domains dominate the data
+
+### Success Metrics
+
+#### Data Quality Metrics
+- **Negative Coverage**: 100% of false availability cases included in curated datasets
+- **URL Uniqueness**: 0% duplicate URLs across all curated datasets  
+- **Domain Diversity**: >80% unique domains for positive cases when sufficient data available
+- **Dataset Size**: Target size achieved or justified when not possible
+
+#### Performance Metrics
+- **Curation Speed**: Dataset curation adds <10% to creation time
+- **Memory Efficiency**: Curation logic handles large date ranges without memory issues
+- **Quality Validation**: Validation catches 100% of data quality issues
+
+#### User Experience Metrics
+- **Clear Statistics**: Users understand curation results from output statistics
+- **Predictable Behavior**: Curation results consistent across multiple runs
+- **Graceful Degradation**: Clear warnings when target size not achievable
+
+### Dependencies
+
+#### Required Completions
+- Phase 15 (Availability Dataset Root Run Priority Bug) ✅ **COMPLETED**
+- Existing availability dataset creation functionality ✅ **AVAILABLE**
+- Database access with sufficient availability data ✅ **AVAILABLE**
+
+#### Optional Enhancements  
+- Performance monitoring for curation process efficiency
+- Advanced quality scoring algorithms for positive example selection
+- Configurable curation parameters (not just --best-100)
 
 ---
 
