@@ -231,6 +231,6 @@ class TestCommandLineIntegration:
         assert "Examples:" in result.stdout
         assert "--date" in result.stdout
         assert "--project" in result.stdout
-        # Should not contain removed parameters
-        assert "--start-date" not in result.stdout
-        assert "--end-date" not in result.stdout
+        # Should now contain date range parameters (Phase 18 enhancement)
+        assert "--start-date" in result.stdout
+        assert "--end-date" in result.stdout

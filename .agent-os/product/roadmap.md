@@ -19,6 +19,8 @@ This is a comprehensive product roadmap for the LangSmith Extractor (LSE) projec
 - [**Phase 13: Dataset Format Fix**](#phase-13-dataset-format-fix--urgent) 🚨 **URGENT**
 - [**Phase 15: Availability Dataset Root Run Priority Bug**](#phase-15-availability-dataset-root-run-priority-bug--urgent) ✅ **COMPLETED**
 - [**Phase 16: Availability Dataset Curation (Best 100)**](#phase-16-availability-dataset-curation-best-100-) 🎯 **NEXT**
+- [**Phase 17: Is_Available Report Feature**](#phase-17-is_available-report-feature-) ✅ **COMPLETED**
+- [**Phase 18: Scraping Insights Unified Reporting**](#phase-18-scraping-insights-unified-reporting-) 🎯 **NEXT**
 
 ---
 
@@ -1632,6 +1634,692 @@ lse eval create-dataset --project my-project --eval-type website --date 2025-09-
 - Performance monitoring for curation process efficiency
 - Advanced quality scoring algorithms for positive example selection
 - Configurable curation parameters (not just --best-100)
+
+## Phase 17: Is_Available Report Feature ✅ **COMPLETED**
+
+**Goal:** Add `is_available` report type to analyze website availability failures across traces  
+**Success Criteria:** New `lse report is_available` command provides comprehensive analysis of website availability issues with date range support
+
+### Feature Overview
+Add a new report type called `is_available` that analyzes traces to identify when website availability checks failed. This report will complement the existing zenrows error analysis by focusing specifically on the `is_available` field from trace outputs.
+
+### Problem Statement
+Current reporting focuses on zenrows scraper errors, but there's a need for dedicated analysis of website availability failures:
+
+1. **Availability-Specific Analysis**: Need reports showing when `is_available` was false vs general scraper errors
+2. **Business Visibility**: Stakeholders need clear metrics on website accessibility issues  
+3. **Trend Analysis**: Understanding patterns in website availability across different time periods
+4. **Complement Evaluation**: Report data that aligns with availability evaluation dataset insights
+
+### Technical Requirements
+
+#### Data Source
+The report will extract `is_available` values from the database field:
+```sql
+-- Extract from runs table 
+data->'outputs'->'website_analysis'->'is_available'
+```
+
+#### Report Logic
+- **Traces**: Analyze root runs (where `trace_id = run_id`) 
+- **Availability Status**: Extract boolean `is_available` from website_analysis outputs
+- **Count Logic**: Count traces where `is_available = false`
+- **Percentage Calculation**: `(is_available false count / total traces) * 100`
+
+### Command Interface
+
+#### New Report Command
+```bash
+# Single date availability report
+lse report is_available --date 2025-09-01
+
+# Date range availability report  
+lse report is_available --start-date 2025-09-01 --end-date 2025-09-07
+
+# Project-specific availability report
+lse report is_available --date 2025-09-01 --project my-project
+
+# All projects aggregated (default)
+lse report is_available --date 2025-09-01
+```
+
+#### Expected Output Format
+CSV format matching existing report patterns:
+```csv
+date,Trace count,is_available = false count,percentage
+2025-09-01,40,3,7.5
+2025-09-02,35,1,2.9
+2025-09-03,42,5,11.9
+```
+
+### Technical Implementation
+
+#### Phase 17.1: Database Query Logic `M`
+**Objective**: Implement database queries to extract availability data from traces
+
+**Key Features:**
+- Query root runs from database (`trace_id = run_id`)
+- Extract `is_available` from `data->'outputs'->'website_analysis'->'is_available'`
+- Support single date and date range operations
+- Handle project filtering (single project or all projects aggregated)
+
+**Implementation Details:**
+```python
+async def analyze_is_available_from_db(
+    self, 
+    project_name: Optional[str] = None,
+    report_date: Optional[datetime] = None,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+) -> Dict[str, Dict[str, Any]]:
+    """Analyze is_available field from database traces."""
+    
+    # Build date filter
+    date_filter = self._build_date_filter(report_date, start_date, end_date)
+    
+    # Query root runs with availability data
+    query = """
+    SELECT 
+        run_date::text as date,
+        COUNT(*) as total_traces,
+        COUNT(*) FILTER (
+            WHERE (data->'outputs'->'website_analysis'->>'is_available')::boolean = false
+        ) as false_count
+    FROM runs 
+    WHERE trace_id = run_id  -- Root runs only
+        AND data->'outputs'->'website_analysis'->'is_available' IS NOT NULL
+        {project_filter}
+        {date_filter}
+    GROUP BY run_date
+    ORDER BY run_date
+    """
+```
+
+#### Phase 17.2: Report Command Integration `M`
+**Objective**: Add `is_available` subcommand to existing report CLI structure
+
+**Key Features:**
+- Integrate with existing `lse report` command structure
+- Support date and date range parameters (matching zenrows-errors pattern)
+- Add project filtering capabilities
+- Maintain consistent CLI interface patterns
+
+**Command Structure:**
+```python
+@report_app.command("is_available")
+def is_available_command(
+    date: Optional[str] = typer.Option(None, "--date", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date for range"),
+    end_date: Optional[str] = typer.Option(None, "--end-date", help="End date for range"),
+    project: Optional[str] = typer.Option(None, "--project", help="Project to analyze"),
+) -> None:
+    """Generate availability failure reports showing is_available=false patterns."""
+```
+
+#### Phase 17.3: Output Formatting `M`
+**Objective**: Format availability analysis results into CSV output
+
+**Key Features:**
+- CSV output matching existing report format standards
+- Percentage calculations with proper rounding
+- Date formatting consistency
+- Handle edge cases (zero traces, missing data)
+
+**Output Format:**
+- Column headers: `date,Trace count,is_available = false count,percentage`
+- Date format: `YYYY-MM-DD`
+- Percentage format: `XX.X` (one decimal place)
+- Handle zero division gracefully
+
+#### Phase 17.4: Integration and Testing `M`
+**Objective**: Ensure seamless integration with existing report infrastructure
+
+**Key Features:**
+- Reuse existing database connection and analyzer infrastructure
+- Comprehensive test coverage for new report type
+- Error handling and edge case coverage
+- Performance testing with large datasets
+
+### Expected Usage Examples
+
+#### Daily Availability Analysis
+```bash
+# Check availability issues for a specific date
+lse report is_available --date 2025-09-13 --project crypto-scanner
+
+# Output:
+# date,Trace count,is_available = false count,percentage
+# 2025-09-13,150,8,5.3
+```
+
+#### Weekly Availability Trends
+```bash  
+# Analyze availability trends over a week
+lse report is_available --start-date 2025-09-01 --end-date 2025-09-07
+
+# Output:
+# date,Trace count,is_available = false count,percentage
+# 2025-09-01,40,3,7.5
+# 2025-09-02,35,1,2.9
+# 2025-09-03,42,5,11.9
+# 2025-09-04,38,2,5.3
+# 2025-09-05,45,4,8.9
+# 2025-09-06,41,1,2.4
+# 2025-09-07,39,3,7.7
+```
+
+#### Multi-Project Aggregation
+```bash
+# Aggregate availability across all projects
+lse report is_available --date 2025-09-13
+
+# Output combines all projects into single daily totals
+```
+
+### Quality Gates
+
+#### Phase 17.1 Completion Criteria
+- [ ] Database queries correctly extract `is_available` from website_analysis
+- [ ] Root run filtering works correctly (`trace_id = run_id`)
+- [ ] Date range filtering supports both single date and date ranges
+- [ ] Project filtering works for single projects and aggregated results
+
+#### Phase 17.2 Completion Criteria  
+- [ ] `is_available` subcommand integrated into existing report CLI
+- [ ] Parameter validation matches existing report command patterns
+- [ ] Help text and documentation clear and consistent
+- [ ] CLI interface follows established conventions
+
+#### Phase 17.3 Completion Criteria
+- [ ] CSV output format matches specification exactly
+- [ ] Percentage calculations accurate and properly rounded
+- [ ] Date formatting consistent with other reports
+- [ ] Edge cases handled gracefully (zero traces, missing data)
+
+#### Phase 17.4 Completion Criteria
+- [ ] Integration tests validate end-to-end functionality
+- [ ] Performance acceptable for large date ranges and datasets
+- [ ] Error handling comprehensive and user-friendly
+- [ ] Test coverage exceeds 95% for all new code
+
+### Implementation Plan
+
+#### Phase 17.1: Database Analysis Engine (Week 1)
+**Deliverables:**
+- [ ] Add `analyze_is_available_from_db()` method to DatabaseTraceAnalyzer
+- [ ] Implement SQL queries for availability data extraction
+- [ ] Add date range and project filtering logic
+- [ ] Create data aggregation and percentage calculation logic
+
+**Acceptance Criteria:**
+- Database queries return accurate availability statistics
+- Date filtering works for both single dates and ranges
+- Project filtering supports single projects and aggregation
+- Performance acceptable for typical date ranges
+
+#### Phase 17.2: CLI Command Implementation (Week 1)
+**Deliverables:**
+- [ ] Add `is_available` subcommand to report command group
+- [ ] Implement parameter validation and help text
+- [ ] Integrate with existing database analyzer infrastructure
+- [ ] Add async execution wrapper for database operations
+
+**Acceptance Criteria:**
+- CLI command accepts all specified parameters correctly
+- Help text provides clear usage guidance
+- Parameter validation prevents invalid input combinations
+- Error messages provide actionable feedback
+
+#### Phase 17.3: Output Formatting and Validation (Week 1) 
+**Deliverables:**
+- [ ] Implement CSV formatting for availability statistics
+- [ ] Add percentage calculation with proper rounding
+- [ ] Create output formatter integration
+- [ ] Add edge case handling for empty results
+
+**Acceptance Criteria:**
+- CSV output matches expected format specification
+- Percentage calculations mathematically correct
+- Edge cases handled without crashes or errors
+- Output formatting consistent with existing reports
+
+#### Phase 17.4: Testing and Quality Assurance (Week 1)
+**Deliverables:**
+- [ ] Comprehensive unit tests for database queries
+- [ ] Integration tests for CLI command functionality  
+- [ ] Performance tests with realistic datasets
+- [ ] Edge case and error handling tests
+
+**Acceptance Criteria:**
+- Test coverage exceeds 95% for all new functionality
+- Performance tests validate acceptable response times
+- Edge case tests cover all identified scenarios
+- Integration tests validate end-to-end workflows
+
+### Success Metrics
+
+#### Data Accuracy Metrics
+- **Query Correctness**: 100% accurate extraction of `is_available` values from database
+- **Calculation Accuracy**: Mathematical accuracy in percentage calculations 
+- **Date Handling**: Correct handling of UTC dates and timezone considerations
+- **Project Filtering**: Accurate aggregation across single and multiple projects
+
+#### Performance Metrics  
+- **Query Performance**: Availability reports complete within 30 seconds for any single date
+- **Range Performance**: Date range reports complete within 2 minutes for 7-day periods
+- **Memory Efficiency**: Report generation uses reasonable memory for large datasets
+- **Scalability**: Performance degrades gracefully with increasing data volumes
+
+#### User Experience Metrics
+- **Interface Consistency**: CLI interface matches patterns from existing report commands
+- **Error Handling**: Clear error messages for all failure scenarios
+- **Documentation Quality**: Help text provides sufficient guidance for users
+- **Output Clarity**: CSV format enables easy analysis and further processing
+
+### Risk Assessment
+
+#### Technical Risks
+- **Data Availability**: `is_available` field may not be present in all traces
+- **Query Performance**: Large date ranges could impact database performance
+- **Data Consistency**: Mixed data formats across different trace versions
+- **Integration Complexity**: Adding to existing report infrastructure may introduce regressions
+
+#### Mitigation Strategies
+- **Null Handling**: Implement robust null checking for missing availability data
+- **Query Optimization**: Use appropriate database indexes and query optimization
+- **Format Validation**: Validate data format compatibility across trace versions
+- **Regression Testing**: Comprehensive testing of existing report functionality
+
+#### Business Risks
+- **Stakeholder Expectations**: Report data must align with business understanding of availability
+- **Data Interpretation**: Users need guidance on interpreting availability vs zenrows error reports
+- **Workflow Integration**: New reports must fit into existing analysis workflows
+
+#### Risk Mitigation
+- **Clear Documentation**: Document relationship between availability and zenrows reports
+- **User Training**: Provide examples and guidance for report interpretation
+- **Phased Rollout**: Gradual deployment with stakeholder feedback incorporation
+
+### Dependencies
+
+#### Required Completions
+- Phase 11 (Reporting Database Migration) ✅ **COMPLETED**
+- Database populated with traces containing website_analysis data ✅ **AVAILABLE**
+- Existing report command infrastructure ✅ **AVAILABLE**
+
+#### Optional Enhancements
+- Phase 16 (Availability Dataset Curation) for comprehensive availability analysis
+- Enhanced error reporting integration for cross-reference analysis
+- Dashboard integration for real-time availability monitoring
+
+#### External Dependencies
+- PostgreSQL database with appropriate indexing for performance
+- Sufficient trace data with website_analysis outputs for meaningful reports
+- Stakeholder requirements validation for report format and content
+
+## Phase 18: Scraping Insights Unified Reporting 🎯 **NEXT**
+
+**Goal:** Modernize zenrows-errors reporting and create unified scraping insights report combining availability and zenrows error analysis  
+**Success Criteria:** Enhanced zenrows-errors with date range support and new scraping-insights report providing comprehensive scraping health metrics
+
+### Feature Overview
+
+This phase addresses two critical improvements to the reporting infrastructure:
+
+1. **Modernize zenrows-errors reporting** to match is_available report capabilities
+2. **Create unified scraping-insights report** combining both availability and zenrows error metrics
+
+The unified approach provides stakeholders with comprehensive scraping health visibility in a single report, enabling better operational decision-making and trend analysis.
+
+### Problem Statement
+
+Current reporting has inconsistencies and gaps:
+
+1. **zenrows-errors Limitations**: Only supports single date analysis, lacks date range capabilities
+2. **Inconsistent Root Run Logic**: zenrows-errors uses legacy trace reconstruction vs is_available's efficient root run targeting  
+3. **Fragmented Insights**: Stakeholders need separate reports for availability and zenrows errors, missing correlation opportunities
+4. **Operational Inefficiency**: Multiple report generation required for comprehensive scraping health analysis
+
+### Business Impact
+
+**Operational Benefits:**
+- **Unified Visibility**: Single report showing complete scraping health picture
+- **Trend Analysis**: Date range support enables pattern identification across both metrics
+- **Correlation Insights**: See relationship between availability failures and zenrows errors
+- **Efficiency Gains**: Reduce report generation overhead from multiple commands to one
+
+**Technical Benefits:**
+- **Performance Improvement**: Leverage efficient root run queries across all scraping reports
+- **Consistency**: Standardize reporting logic and parameters across scraping analysis
+- **Maintainability**: Unified codebase reduces technical debt and testing overhead
+
+### Technical Requirements
+
+#### Phase 18.1: Zenrows-Errors Report Modernization `M`
+
+**Objective**: Bring zenrows-errors reporting in line with is_available capabilities
+
+**Key Features:**
+- **Root Run Targeting**: Update to use `trace_id = run_id` logic for accurate trace counting
+- **Date Range Support**: Add `--start-date`/`--end-date` parameters matching is_available pattern
+- **Backward Compatibility**: Maintain existing `--date` parameter functionality
+- **Performance Optimization**: Leverage database-optimized queries vs file-based reconstruction
+
+**Current vs New Approach:**
+```bash
+# Current (single date only)
+lse report zenrows-errors --date 2025-09-01
+
+# New (maintains backward compatibility + adds range support)
+lse report zenrows-errors --date 2025-09-01
+lse report zenrows-errors --start-date 2025-09-01 --end-date 2025-09-07
+```
+
+#### Phase 18.2: Scraping-Insights Unified Report `M`
+
+**Objective**: Create comprehensive scraping health report combining availability and zenrows metrics
+
+**Key Features:**
+- **Unified CSV Output**: Single report with both availability and zenrows error data
+- **Date Range Support**: Full date range analysis across both metric types  
+- **Project Filtering**: Support single project or aggregated analysis
+- **Performance Correlation**: Enable analysis of relationships between metrics
+
+**Command Interface:**
+```bash
+# Single date analysis
+lse report scraping-insights --date 2025-09-01
+
+# Date range analysis
+lse report scraping-insights --start-date 2025-09-01 --end-date 2025-09-07
+
+# Project-specific analysis
+lse report scraping-insights --date 2025-09-01 --project my-project
+```
+
+**Output Format:**
+```csv
+date,trace count,zenrows errors count,zenrows errors percentage,is_available false count,is_available false percentage
+2025-09-01,50,10,20.0,5,10.0
+2025-09-02,45,8,17.8,3,6.7
+2025-09-03,52,12,23.1,7,13.5
+```
+
+### Implementation Architecture
+
+#### Database Query Optimization
+
+**Unified Root Run Query:**
+```sql
+SELECT 
+    run_date::text as date,
+    COUNT(*) as total_traces,
+    
+    -- Zenrows error counting (traverse hierarchy for error detection)
+    COUNT(*) FILTER (
+        WHERE EXISTS (
+            SELECT 1 FROM runs child_runs 
+            WHERE child_runs.trace_id = runs.trace_id 
+            AND child_runs.data->>'name' ILIKE '%zenrows_scraper%' 
+            AND child_runs.data->>'status' = 'error'
+        )
+    ) as zenrows_error_traces,
+    
+    -- Availability counting (direct root run field access)
+    COUNT(*) FILTER (
+        WHERE (data->'outputs'->'website_analysis'->>'is_available')::boolean = false
+    ) as availability_false_traces
+
+FROM runs 
+WHERE trace_id = run_id  -- Root runs only
+    AND run_date >= :start_date AND run_date <= :end_date
+    {project_filter}
+GROUP BY run_date
+ORDER BY run_date
+```
+
+#### Shared Infrastructure
+
+**Component Reuse:**
+- `DatabaseTraceAnalyzer`: Extend with unified analysis method
+- `ReportFormatter`: Add scraping-insights CSV formatting
+- `CLI Parameter Validation`: Reuse date range validation logic
+- `Error Handling`: Consistent error handling across all scraping reports
+
+**New Components:**
+- `analyze_scraping_insights_from_db()`: Unified database analysis method
+- `format_scraping_insights_report()`: Combined CSV formatting
+- `scraping-insights` CLI command: New subcommand integration
+
+### Command Interface Design
+
+#### Enhanced zenrows-errors Command
+
+**Backward Compatible Parameters:**
+```python
+@report_app.command("zenrows-errors")  
+def zenrows_errors_command(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date for range"),
+    end_date: Optional[str] = typer.Option(None, "--end-date", help="End date for range"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project to analyze"),
+) -> None:
+```
+
+**Parameter Validation:**
+- Mutually exclusive: `--date` OR `--start-date`/`--end-date`
+- Both required for range: `--start-date` AND `--end-date`
+- Optional project filtering maintains existing behavior
+
+#### New scraping-insights Command
+
+**Full Parameter Set:**
+```python
+@report_app.command("scraping-insights")
+def scraping_insights_command(
+    date: Optional[str] = typer.Option(None, "--date", "-d", help="Single date (YYYY-MM-DD)"),
+    start_date: Optional[str] = typer.Option(None, "--start-date", help="Start date for range"),
+    end_date: Optional[str] = typer.Option(None, "--end-date", help="End date for range"),
+    project: Optional[str] = typer.Option(None, "--project", "-p", help="Project to analyze"),
+) -> None:
+```
+
+### Expected Usage Examples
+
+#### Enhanced zenrows-errors Usage
+
+```bash
+# Existing usage (unchanged)
+lse report zenrows-errors --date 2025-09-01
+
+# New range capability
+lse report zenrows-errors --start-date 2025-09-01 --end-date 2025-09-07
+
+# Project-specific range analysis
+lse report zenrows-errors --start-date 2025-09-01 --end-date 2025-09-07 --project crypto-scanner
+```
+
+#### New scraping-insights Usage
+
+```bash
+# Daily scraping health overview
+lse report scraping-insights --date 2025-09-01
+
+# Weekly scraping health trends
+lse report scraping-insights --start-date 2025-09-01 --end-date 2025-09-07
+
+# Project-specific scraping insights
+lse report scraping-insights --date 2025-09-01 --project crypto-analysis
+
+# Multi-project aggregated insights
+lse report scraping-insights --start-date 2025-09-01 --end-date 2025-09-07
+```
+
+#### Output Format Comparison
+
+**zenrows-errors (enhanced, maintains existing format):**
+```csv
+Date,Total Traces,Zenrows Errors,Error Rate
+2025-09-01,50,10,20.0
+2025-09-02,45,8,17.8
+```
+
+**scraping-insights (new unified format):**
+```csv
+date,trace count,zenrows errors count,zenrows errors percentage,is_available false count,is_available false percentage
+2025-09-01,50,10,20.0,5,10.0
+2025-09-02,45,8,17.8,3,6.7
+```
+
+### Quality Gates
+
+#### Phase 18.1 Completion Criteria
+
+**Functional Requirements:**
+- [ ] zenrows-errors supports date ranges with same validation as is_available
+- [ ] Root run logic updated to use `trace_id = run_id` consistently  
+- [ ] Backward compatibility maintained for existing single-date usage
+- [ ] Performance improved through database optimization
+
+**Technical Requirements:**
+- [ ] Database queries optimized for root run targeting
+- [ ] Parameter validation matches is_available patterns
+- [ ] Error handling comprehensive and user-friendly
+- [ ] Help text updated with new range parameters
+
+#### Phase 18.2 Completion Criteria
+
+**Functional Requirements:**
+- [ ] scraping-insights command provides unified availability and zenrows metrics
+- [ ] CSV output format matches specification exactly
+- [ ] Date range and project filtering work correctly
+- [ ] Percentage calculations accurate for both metric types
+
+**Technical Requirements:**
+- [ ] Unified database query efficiently extracts both metric types
+- [ ] Shared infrastructure reduces code duplication
+- [ ] Performance acceptable for large date ranges
+- [ ] Integration with existing report infrastructure seamless
+
+### Implementation Plan
+
+#### Phase 18.1: Zenrows-Errors Modernization (Week 1)
+
+**Deliverables:**
+- [ ] Update `analyze_zenrows_errors_from_db()` to use root run logic
+- [ ] Add date range parameter support to zenrows-errors command
+- [ ] Implement parameter validation matching is_available pattern
+- [ ] Update database queries for performance optimization
+- [ ] Comprehensive testing for backward compatibility
+
+**Acceptance Criteria:**
+- Database queries return accurate zenrows error statistics using root run logic
+- Date range filtering works for both single dates and ranges
+- Existing single-date usage continues to work unchanged
+- Performance improved through optimized database queries
+
+#### Phase 18.2: Scraping-Insights Unified Report (Week 1)
+
+**Deliverables:**
+- [ ] Create `analyze_scraping_insights_from_db()` method combining both metrics
+- [ ] Add `scraping-insights` CLI command with full parameter support
+- [ ] Implement `format_scraping_insights_report()` for unified CSV output
+- [ ] Create comprehensive test suite for unified functionality
+
+**Acceptance Criteria:**
+- Unified report accurately combines availability and zenrows error metrics
+- CSV output format matches specification exactly
+- Date range and project filtering work correctly across both metric types
+- Performance acceptable for typical use cases
+
+#### Phase 18.3: Testing and Integration (Week 1)
+
+**Deliverables:**
+- [ ] Comprehensive test suite for enhanced zenrows-errors functionality
+- [ ] Integration tests for scraping-insights unified reporting
+- [ ] Performance testing with realistic datasets
+- [ ] Regression testing for existing functionality
+
+**Acceptance Criteria:**
+- Test coverage exceeds 95% for all new and modified functionality
+- No regressions introduced to existing report commands
+- Performance tests validate acceptable response times
+- Integration tests cover end-to-end workflows
+
+### Success Metrics
+
+#### Data Accuracy Metrics
+- **Query Correctness**: 100% accurate extraction of both zenrows and availability metrics
+- **Root Run Consistency**: Accurate trace counting using `trace_id = run_id` across all reports
+- **Calculation Accuracy**: Mathematical accuracy in percentage calculations for both metrics
+- **Data Correlation**: Consistent trace counts between individual and unified reports
+
+#### Performance Metrics
+- **Query Performance**: Unified reports complete within 45 seconds for single date
+- **Range Performance**: Date range reports complete within 3 minutes for 7-day periods
+- **Efficiency Gains**: 50%+ reduction in database queries for users requiring both metrics
+- **Memory Usage**: Reasonable memory consumption for large datasets
+
+#### User Experience Metrics
+- **Interface Consistency**: All scraping reports follow consistent CLI patterns
+- **Help Documentation**: Clear guidance for all parameter combinations
+- **Error Messages**: Actionable feedback for parameter and data issues
+- **Output Compatibility**: CSV formats suitable for existing analysis workflows
+
+### Risk Assessment
+
+#### Technical Risks
+
+**Database Performance Risk: Medium**
+- **Risk**: Unified queries combining both metrics could impact performance
+- **Impact**: Slower report generation or database load
+- **Mitigation**: Optimize queries with proper indexing and implement query caching
+
+**Backward Compatibility Risk: Low**
+- **Risk**: Changes to zenrows-errors could break existing usage
+- **Impact**: User workflow disruption and script failures
+- **Mitigation**: Comprehensive regression testing and strict parameter compatibility
+
+**Query Complexity Risk: Medium**
+- **Risk**: Complex unified queries could be difficult to maintain and debug
+- **Impact**: Technical debt and maintenance burden
+- **Mitigation**: Modular query design and comprehensive testing
+
+#### Business Risks
+
+**User Adoption Risk: Low**
+- **Risk**: Users may prefer separate reports over unified scraping-insights
+- **Impact**: Low adoption of new unified reporting capabilities
+- **Mitigation**: Clear documentation of benefits and gradual migration guidance
+
+**Data Interpretation Risk: Medium**
+- **Risk**: Combined metrics could lead to misinterpretation of scraping health
+- **Impact**: Incorrect operational decisions based on unified data
+- **Mitigation**: Clear documentation and training on metric relationships
+
+### Dependencies
+
+#### Required Completions
+- Phase 17 (Is_Available Report Feature) ✅ **COMPLETED**
+- Database infrastructure with appropriate indexing ✅ **AVAILABLE**
+- Existing report command infrastructure ✅ **AVAILABLE**
+
+#### Optional Enhancements
+- Dashboard integration for real-time scraping health monitoring
+- Alert thresholds based on combined scraping health metrics
+- Historical trending analysis across both availability and zenrows metrics
+
+#### External Dependencies
+
+**Technical Requirements:**
+- PostgreSQL database with performance optimizations for combined queries
+- Sufficient trace data covering both availability and zenrows error patterns
+- Testing infrastructure for performance validation
+
+**Stakeholder Requirements:**
+- Business validation of unified reporting approach
+- User acceptance testing with representative workflows
+- Training materials for new scraping-insights interpretation
 
 ---
 

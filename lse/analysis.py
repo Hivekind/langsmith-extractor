@@ -643,85 +643,112 @@ class DatabaseTraceAnalyzer:
     async def analyze_zenrows_errors_from_db(
         self,
         project_name: Optional[str] = None,
-        report_date: datetime = None,
+        report_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
     ) -> Dict[str, Dict[str, Any]]:
-        """Analyze zenrows errors from database by aggregating runs into traces.
+        """Analyze zenrows errors from database using root run logic with date range support.
 
         Args:
             project_name: Project to analyze (None for all projects)
-            report_date: Date to analyze (required)
+            report_date: Single date to analyze (mutually exclusive with date range)
+            start_date: Start date for range analysis
+            end_date: End date for range analysis
 
         Returns:
             Dictionary with date keys and analysis results
-        """
-        if not report_date:
-            raise ValidationError("Date parameter is required")
 
-        # Convert datetime to date for database query
-        query_date = report_date.date() if hasattr(report_date, "date") else report_date
+        Raises:
+            ValidationError: If date parameters are invalid or conflicting
+        """
+        # Validate date parameters
+        if report_date and (start_date or end_date):
+            raise ValidationError("Cannot specify both single date and date range")
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both start_date and end_date required for range analysis")
+
+        if not report_date and not (start_date and end_date):
+            raise ValidationError("Either single date or date range required")
+
+        # Build date filter clause
+        if report_date:
+            query_date = report_date.date() if hasattr(report_date, "date") else report_date
+            date_filter = "AND run_date = :date"
+            date_params = {"date": query_date}
+        else:
+            query_start = start_date.date() if hasattr(start_date, "date") else start_date
+            query_end = end_date.date() if hasattr(end_date, "date") else end_date
+            date_filter = "AND run_date >= :start_date AND run_date <= :end_date"
+            date_params = {"start_date": query_start, "end_date": query_end}
+
+        # Build project filter clause
+        if project_name:
+            project_filter = "AND project = :project"
+            project_params = {"project": project_name}
+        else:
+            project_filter = ""
+            project_params = {}
+
+        # Combine parameters
+        query_params = {**date_params, **project_params}
+
+        self.logger.info(f"Analyzing zenrows errors for date parameters: {query_params}")
 
         async with self.db.get_session() as session:
-            # Query runs for the specified date and project
-            if project_name:
-                result = await session.execute(
-                    text("""
-                    SELECT 
-                        trace_id,
-                        array_agg(data ORDER BY created_at) as run_data_array,
-                        COUNT(*) as run_count
-                    FROM runs 
-                    WHERE project = :project 
-                      AND run_date = :date
-                      AND trace_id IS NOT NULL
-                    GROUP BY trace_id
-                    ORDER BY trace_id
-                    """),
-                    {"project": project_name, "date": query_date},
-                )
-            else:
-                result = await session.execute(
-                    text("""
-                    SELECT 
-                        trace_id,
-                        array_agg(data ORDER BY created_at) as run_data_array,
-                        COUNT(*) as run_count
-                    FROM runs 
-                    WHERE run_date = :date
-                      AND trace_id IS NOT NULL
-                    GROUP BY trace_id
-                    ORDER BY trace_id
-                    """),
-                    {"date": query_date},
-                )
+            # Query root runs with zenrows error detection using EXISTS subquery
+            query = f"""
+            SELECT 
+                run_date::text as date,
+                COUNT(*) as total_traces,
+                COUNT(*) FILTER (
+                    WHERE EXISTS (
+                        SELECT 1 FROM runs child_runs 
+                        WHERE child_runs.trace_id = runs.trace_id 
+                        AND child_runs.data->>'name' ILIKE '%zenrows_scraper%' 
+                        AND child_runs.data->>'status' = 'error'
+                    )
+                ) as zenrows_error_count
+            FROM runs 
+            WHERE trace_id = run_id  -- Root runs only
+                {project_filter}
+                {date_filter}
+            GROUP BY run_date
+            ORDER BY run_date
+            """
 
-            # Process traces and extract zenrows errors
-            total_traces = 0
-            total_errors = 0
+            self.logger.debug(f"Executing zenrows error query: {query}")
+            result = await session.execute(text(query), query_params)
+
+            # Process results into expected format
+            zenrows_data = {}
 
             for row in result.fetchall():
-                run_data_array = row[1]
+                date_str = row[0]
+                total_traces = row[1]
+                zenrows_error_count = row[2]
 
-                total_traces += 1
+                # Calculate error rate
+                if total_traces > 0:
+                    error_rate = round((zenrows_error_count / total_traces) * 100, 1)
+                else:
+                    error_rate = 0.0
 
-                # Reconstruct trace by merging runs
-                trace_data = self._reconstruct_trace_from_runs(run_data_array)
-
-                # Extract zenrows errors from this trace
-                errors = extract_zenrows_errors(trace_data)
-                total_errors += len(errors)
-
-            # Calculate error rate
-            error_rate = round((total_errors / total_traces) * 100, 1) if total_traces > 0 else 0.0
-
-            # Return in format compatible with existing formatter
-            date_str = query_date.strftime("%Y-%m-%d")
-            return {
-                date_str: {
+                zenrows_data[date_str] = {
                     "total_traces": total_traces,
-                    "zenrows_errors": total_errors,
+                    "zenrows_errors": zenrows_error_count,
                     "error_rate": error_rate,
                 }
-            }
+
+                self.logger.debug(
+                    f"Date {date_str}: {total_traces} traces, {zenrows_error_count} with zenrows errors ({error_rate}%)"
+                )
+
+            if not zenrows_data:
+                self.logger.warning("No zenrows error data found for specified parameters")
+
+            self.logger.info(f"Zenrows error analysis completed for {len(zenrows_data)} days")
+            return zenrows_data
 
     async def generate_zenrows_detail_from_db(
         self,
@@ -824,3 +851,236 @@ class DatabaseTraceAnalyzer:
                 root_run["child_runs"] = child_runs
 
         return root_run
+
+    async def analyze_is_available_from_db(
+        self,
+        project_name: Optional[str] = None,
+        report_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Analyze is_available field from database traces.
+
+        Args:
+            project_name: Project to analyze (None for all projects)
+            report_date: Single date to analyze (mutually exclusive with date range)
+            start_date: Start date for range analysis
+            end_date: End date for range analysis
+
+        Returns:
+            Dictionary with date keys and availability statistics
+
+        Raises:
+            ValidationError: If date parameters are invalid or conflicting
+        """
+        # Validate date parameters
+        if report_date and (start_date or end_date):
+            raise ValidationError("Cannot specify both single date and date range")
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both start_date and end_date required for range analysis")
+
+        if not report_date and not (start_date and end_date):
+            raise ValidationError("Either single date or date range required")
+
+        # Build date filter clause
+        if report_date:
+            query_date = report_date.date() if hasattr(report_date, "date") else report_date
+            date_filter = "AND run_date = :date"
+            date_params = {"date": query_date}
+        else:
+            query_start = start_date.date() if hasattr(start_date, "date") else start_date
+            query_end = end_date.date() if hasattr(end_date, "date") else end_date
+            date_filter = "AND run_date >= :start_date AND run_date <= :end_date"
+            date_params = {"start_date": query_start, "end_date": query_end}
+
+        # Build project filter clause
+        if project_name:
+            project_filter = "AND project = :project"
+            project_params = {"project": project_name}
+        else:
+            project_filter = ""
+            project_params = {}
+
+        # Combine parameters
+        query_params = {**date_params, **project_params}
+
+        self.logger.info(f"Analyzing is_available data for date parameters: {query_params}")
+
+        async with self.db.get_session() as session:
+            # Query root runs with availability data
+            query = f"""
+            SELECT 
+                run_date::text as date,
+                COUNT(*) as total_traces,
+                COUNT(*) FILTER (
+                    WHERE (data->'outputs'->'website_analysis'->>'is_available')::boolean = false
+                ) as false_count
+            FROM runs 
+            WHERE trace_id = run_id  -- Root runs only
+                AND data->'outputs'->'website_analysis'->'is_available' IS NOT NULL
+                {project_filter}
+                {date_filter}
+            GROUP BY run_date
+            ORDER BY run_date
+            """
+
+            self.logger.debug(f"Executing availability query: {query}")
+            result = await session.execute(text(query), query_params)
+
+            # Process results into expected format
+            availability_data = {}
+
+            for row in result.fetchall():
+                date_str = row[0]
+                total_traces = row[1]
+                false_count = row[2]
+
+                # Calculate percentage
+                if total_traces > 0:
+                    percentage = round((false_count / total_traces) * 100, 1)
+                else:
+                    percentage = 0.0
+
+                availability_data[date_str] = {
+                    "total_traces": total_traces,
+                    "is_available_false_count": false_count,
+                    "percentage": percentage,
+                }
+
+                self.logger.debug(
+                    f"Date {date_str}: {total_traces} traces, {false_count} unavailable ({percentage}%)"
+                )
+
+            if not availability_data:
+                self.logger.warning("No availability data found for specified parameters")
+
+            self.logger.info(f"Availability analysis completed for {len(availability_data)} days")
+            return availability_data
+
+    async def analyze_scraping_insights_from_db(
+        self,
+        project_name: Optional[str] = None,
+        report_date: Optional[datetime] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Analyze combined scraping health metrics from database.
+
+        Args:
+            project_name: Project to analyze (None for all projects)
+            report_date: Single date to analyze (mutually exclusive with date range)
+            start_date: Start date for range analysis
+            end_date: End date for range analysis
+
+        Returns:
+            Dictionary with date keys and combined scraping health metrics
+
+        Raises:
+            ValidationError: If date parameters are invalid or conflicting
+        """
+        # Validate date parameters
+        if report_date and (start_date or end_date):
+            raise ValidationError("Cannot specify both single date and date range")
+
+        if (start_date and not end_date) or (end_date and not start_date):
+            raise ValidationError("Both start_date and end_date required for range analysis")
+
+        if not report_date and not (start_date and end_date):
+            raise ValidationError("Either single date or date range required")
+
+        # Build date filter clause
+        if report_date:
+            query_date = report_date.date() if hasattr(report_date, "date") else report_date
+            date_filter = "AND run_date = :date"
+            date_params = {"date": query_date}
+        else:
+            query_start = start_date.date() if hasattr(start_date, "date") else start_date
+            query_end = end_date.date() if hasattr(end_date, "date") else end_date
+            date_filter = "AND run_date >= :start_date AND run_date <= :end_date"
+            date_params = {"start_date": query_start, "end_date": query_end}
+
+        # Build project filter clause
+        if project_name:
+            project_filter = "AND project = :project"
+            project_params = {"project": project_name}
+        else:
+            project_filter = ""
+            project_params = {}
+
+        # Combine parameters
+        query_params = {**date_params, **project_params}
+
+        self.logger.info(f"Analyzing scraping insights for date parameters: {query_params}")
+
+        async with self.db.get_session() as session:
+            # Unified query combining both zenrows and availability metrics
+            query = f"""
+            SELECT 
+                run_date::text as date,
+                COUNT(*) as total_traces,
+                
+                -- Zenrows error counting (traverse hierarchy for error detection)
+                COUNT(*) FILTER (
+                    WHERE EXISTS (
+                        SELECT 1 FROM runs child_runs 
+                        WHERE child_runs.trace_id = runs.trace_id 
+                        AND child_runs.data->>'name' ILIKE '%zenrows_scraper%' 
+                        AND child_runs.data->>'status' = 'error'
+                    )
+                ) as zenrows_error_count,
+                
+                -- Availability counting (direct root run field access)
+                COUNT(*) FILTER (
+                    WHERE (data->'outputs'->'website_analysis'->>'is_available')::boolean = false
+                ) as availability_false_count
+
+            FROM runs 
+            WHERE trace_id = run_id  -- Root runs only
+                AND data->'outputs'->'website_analysis'->'is_available' IS NOT NULL
+                {project_filter}
+                {date_filter}
+            GROUP BY run_date
+            ORDER BY run_date
+            """
+
+            self.logger.debug(f"Executing scraping insights query: {query}")
+            result = await session.execute(text(query), query_params)
+
+            # Process results into expected format
+            scraping_data = {}
+
+            for row in result.fetchall():
+                date_str = row[0]
+                total_traces = row[1]
+                zenrows_error_count = row[2]
+                availability_false_count = row[3]
+
+                # Calculate percentages
+                if total_traces > 0:
+                    zenrows_percentage = round((zenrows_error_count / total_traces) * 100, 1)
+                    availability_percentage = round(
+                        (availability_false_count / total_traces) * 100, 1
+                    )
+                else:
+                    zenrows_percentage = 0.0
+                    availability_percentage = 0.0
+
+                scraping_data[date_str] = {
+                    "total_traces": total_traces,
+                    "zenrows_error_count": zenrows_error_count,
+                    "zenrows_error_percentage": zenrows_percentage,
+                    "availability_false_count": availability_false_count,
+                    "availability_false_percentage": availability_percentage,
+                }
+
+                self.logger.debug(
+                    f"Date {date_str}: {total_traces} traces, {zenrows_error_count} zenrows errors ({zenrows_percentage}%), "
+                    f"{availability_false_count} availability failures ({availability_percentage}%)"
+                )
+
+            if not scraping_data:
+                self.logger.warning("No scraping insights data found for specified parameters")
+
+            self.logger.info(f"Scraping insights analysis completed for {len(scraping_data)} days")
+            return scraping_data
